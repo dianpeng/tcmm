@@ -1,0 +1,64 @@
+
+/**
+ *  global := decl
+ *  decl      := type ID decl-rest
+ *  decl-rest := '(' func-arg ')' code-body |
+ *                ASSIGN expr SEMICOLON     |
+ *                SEMICOLON
+ *  sdecl  := type ID arrp
+ *  ptype  := CHAR | INT | DOUBLE | BOOL | void
+ *  stype  := STRUCT ID
+ *  type   := (ptype | stype) (STAR)*
+ *  arrp   := LSQR INT RSQR
+ *
+ *  struct-decl   := STRUCT ID LBRA struct-fileds RBRA SEMICOLON
+ *  struct-fields := sdecl*
+ *
+ *  expr   := ternary
+ *  ternary:= binary ( '?' expr ':' expr )?
+ *
+ *  binary := b0
+ *
+ *  b0     := b1 (OR b0)
+ *  b1     := b2 (AND b1)
+ *  b2     := b3 (EQ | NE) b2
+ *  b3     := b4 (LT | LE | GT | GE) b3
+ *  b4     := b5 (ADD | SUB) b4
+ *  b5     := b6 (MUL | DIV | MOD) b5
+ *  b6     := unary
+ *
+ *  unary  := prefix | (SUB|NOT|ADDR) unary
+ *  prefix := primary prefix-comp
+ *  prefix-comp := (dot-comp | index-comp | call-comp)*
+ *
+ *  dot-comp   := DOT ID
+ *  index-comp := LSQR expr RSQR
+ *  call-comp  := LPAR call-arg RPAR
+ *  call-arg   := __empty__ | expr (COMMA expr)*
+ *
+ *  primary    := INT | DOUBLE | TRUE | FALSE | STRING | struct-literal | LPAR expr RPAR
+ *  struct-literal := LBRA struct-literal-field RBRA
+ *  struct-literal-field := (DOT ID ASSIGN expr)*
+ *
+ *  code-body  := LBRA stmt-list RBRA
+ *  stmt-list  := (stmt)*
+ *
+ *  stmt       := sstmt SEMICOLON | func-call | branch | for | return
+ *
+ *  vdef       := type ID SEMICOLON | type ID ASSIGN expr SEMICOLON;
+ *  assign     := ID (ASSIGN | SADD | SSUB | SMUL | SDIV ) expr SEMICOLON;
+ *  func-call  := primary (prefix-comp)* (call-comp)
+ *  self-stmt  := (INC|DED) expr
+ *
+ *  sstmt      := vdef | assign | func-call | self-stmt
+ *
+ *  chunk-stmt := code-body | stmt
+ *
+ *  branch     := if-init if-rest
+ *  if-init    := IF LPAR expr RPAR chunk-stmt
+ *  if-rest    := (ELSE_IF LPAR expr RPAR chunk-stmt)* (if-else)
+ *  if-else    := ELSE chunk-stmt
+ *
+ *  for        := FOR LPAR sstmt SEMICOLON expr SEMICOLON sstmt chunk-stmt
+ *  return     := RETURN (expr) ? SEMICOLON
+ */
