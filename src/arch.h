@@ -5,7 +5,8 @@
  * Architecuter related information
  */
 
-#define POINTER_SIZE sizeof(void*)
+#define MWORD_SIZE sizeof(void*)
+#define PTR_SIZE   sizeof(void*)
 
 #if defined(__x86_64__)
 #define ARCH_X64

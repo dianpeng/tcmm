@@ -1,5 +1,7 @@
 #include "tcmm.h"
 
+#if 0
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -7,8 +9,10 @@
 
 typedef struct _Parser {
   LitPool* lpool;
+  TypeSys*   sys;
+
   Lexer    lexer;
-  MPool    pool ;
+  MPool     pool;
 } Parser;
 
 #define Grab(XX) (MPoolGrab(&(p->pool),sizeof(XX)))
@@ -95,3 +99,5 @@ static Expr* ParsePrimary( Parser* p ) {
       return NULL;
   }
 }
+
+#endif

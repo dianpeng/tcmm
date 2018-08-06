@@ -28,10 +28,11 @@ typedef struct _MPool {
   size_t     ftm;
 } MPool;
 
-PAPI void  MPoolInit  ( MPool* , size_t , size_t );
-PAPI void  MPoolDelete( MPool* );
-PAPI void  MPoolReset ( MPool* , size_t , size_t );
-PAPI void* MPoolGrab  ( MPool* , size_t );
+PAPI void  MPoolInit   ( MPool* , size_t , size_t );
+PAPI void  MPoolDelete ( MPool* );
+PAPI void  MPoolReset  ( MPool* , size_t , size_t );
+PAPI void* MPoolGrab   ( MPool* , size_t );
+PAPI void* MPoolRealloc( MPool* , void* , size_t , size_t );
 
 // helpers
 PAPI const char* MPoolStrDup( MPool* , const char* );
@@ -184,15 +185,14 @@ typedef enum _EType {
   ET_STR,
   ET_ARR,
   ET_STRUCT,
-  ET_FUNCTION,
-
-  ET_VOID,
+  ET_FUNC,
 
   // primitive type
-  ETP_INT,
-  ETP_DBL,
-  ETP_CHAR,
-  ETP_BOOL,
+  EPT_INT,
+  EPT_DBL,
+  EPT_CHAR,
+  EPT_BOOL,
+  EPT_VOID,
 
   ET_UNKNOWN
 } EType;
@@ -200,8 +200,8 @@ typedef enum _EType {
 // represents a Type object
 typedef struct _Type {
   struct _Type* next;
-  EType tag;
-  size_t size;
+  EType          tag;
+  size_t        size;
 } Type;
 
 typedef struct _PrimitiveType {
@@ -216,18 +216,19 @@ typedef struct _FieldType {
   struct _StructType* p;
   size_t         offset;   // offset from the start of the field, include padding
   const Type*         t;   // actual type for this field
-  LitIdx            lit;   // lit index to the name of the field type
+  LitIdx           name;   // lit index to the name of the field type
 } FieldType;
 
 typedef struct _StructType {
-  Type base;
+  Type               base;
   const FieldType* fstart;
   size_t            fsize;
   size_t             fcap;
+  LitIdx             name;
 } StructType;
 
 typedef struct _ArrType {
-  Type base;
+  Type        base;
   const Type* type;
   size_t       len;
 } ArrType;
@@ -238,19 +239,20 @@ typedef struct _FuncTypeArg {
 } FuncTypeArg;
 
 typedef struct _FuncType {
-  Type b      ase;
+  Type       base;
   LitIdx     name;
   const Type* ret;
 
-  const FuncTypeArg* arg;
-  size_t        arg_size;
-  size_t        arg_cap;
+  FuncTypeArg* arg;
+  size_t  arg_size;
+  size_t   arg_cap;
 } FuncType;
 
 typedef struct _TypeSys {
   Type*         types;
   PrimitiveType t_int;
   PrimitiveType t_dbl;
+  PrimitiveType t_char;
   PrimitiveType t_bool;
   PrimitiveType t_void;
   StrType       t_str;
@@ -268,6 +270,7 @@ void TypeSysDelete( TypeSys* );
 #define TypeSysGetInt(TS)  (const PrimitiveType*)(&((TS)->t_int))
 #define TypeSysGetDbl(TS)  (const PrimitiveType*)(&((TS)->t_dbl))
 #define TypeSysGetBool(TS) (const PrimitiveType*)(&((TS)->t_bool))
+#define TypeSysGetChar(TS) (const PrimitiveType*)(&((TS)->t_char))
 #define TypeSysGetVoid(TS) (const PrimitiveType*)(&((TS)->t_void))
 #define TypeSysGetStr(TS)  (const StrType*)(&((TS)->t_str))
 
@@ -281,7 +284,6 @@ PAPI
 const FuncType* TypeSysGetFunc  ( TypeSys* , LitIdx );
 
 // setter
-
 // struct type
 PAPI
 StructType* TypeSysSetStruct  ( TypeSys* , LitIdx );
@@ -303,6 +305,10 @@ void TypeSysFuncSetRet( TypeSys* , FuncType* , const Type* );
 PAPI
 const FuncTypeArg* TypeSysFuncAddArg( TypeSys* , FuncType* , const Type* , LitIdx );
 
+// type conversion
+PAPI
+int TypeSysCanCast( TypeSys* , const Type* , const Type* );
+
 /* -------------------------------------------------------
  * Symbol
  * ------------------------------------------------------*/
@@ -321,6 +327,7 @@ typedef enum _EScpType {
   SCT_LEXICAL,
   SCT_UNKNOWN
 } EScpType;
+
 typedef struct _SymInfo {
   LitIdx      name; // variable name
   const Type* type; // variables' type
@@ -430,13 +437,14 @@ typedef struct _ExprPrefixCompCall {
   size_t   sz;
 } ExprPrefixCompCall;
 
-typedef enum EExprPrefixCompType {
+typedef enum _EExprPrefixCompType {
   EEPCT_DOT,
   EEPCT_IDX,
   EEPCT_CALL
-};
+} EExprPrefixCompType;
 
 typedef struct _ExprPrefixComp {
+  struct _ExprPrefixComp* next;
   union {
     Sym*     dot;
     Expr* idx;
@@ -447,8 +455,9 @@ typedef struct _ExprPrefixComp {
 
 typedef struct _ExprPrefix {
   Expr     base;
-  const ExprID* id;
-} _ExprPrefix;
+  LitIdx   init;
+  ExprPrefixComp* rest;
+} ExprPrefix;
 
 typedef struct _ExprUnary {
   Expr       base;

@@ -83,6 +83,13 @@ void* MPoolGrab( MPool* pool , size_t sz ) {
 }
 
 PAPI
+void* MPoolRealloc( MPool* pool , void* obuf , size_t old_sz , size_t new_sz ) {
+  void* nbuf = MPoolGrab(pool,new_sz);
+  if(old_sz) memcpy(nbuf,obuf,old_sz);
+  return nbuf;
+}
+
+PAPI
 const char* MPoolStrDup( MPool* pool , const char* str ) {
   size_t l = strlen(str);
   char* s = MPoolGrab(pool,l+1);
