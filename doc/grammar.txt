@@ -27,7 +27,7 @@
  *  b5     := b6 (MUL | DIV | MOD) b5
  *  b6     := unary
  *
- *  unary  := prefix | (SUB|NOT|ADDR) unary
+ *  unary  := prefix | (SUB|NOT) unary
  *  prefix := primary prefix-comp
  *  prefix-comp := (dot-comp | index-comp | call-comp)*
  *
@@ -48,9 +48,8 @@
  *  vdef       := type ID SEMICOLON | type ID ASSIGN expr SEMICOLON;
  *  assign     := ID (ASSIGN | SADD | SSUB | SMUL | SDIV ) expr SEMICOLON;
  *  func-call  := primary (prefix-comp)* (call-comp)
- *  self-stmt  := (INC|DED) expr
  *
- *  sstmt      := vdef | assign | func-call | self-stmt
+ *  sstmt      := vdef | assign | func-call
  *
  *  chunk-stmt := code-body | stmt
  *

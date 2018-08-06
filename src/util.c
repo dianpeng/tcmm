@@ -233,6 +233,48 @@ const Lit* LitPoolIndex( LitPool* pool , LitIdx idx ) {
 }
 
 PAPI
+const char* LitPoolStr( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_STR);
+  return l->d.str;
+}
+
+PAPI
+const char* LitPoolId( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_ID);
+  return l->d.str;
+}
+
+PAPI
+double LitPoolDbl( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_DBL);
+  return l->d.rval;
+}
+
+PAPI
+int32_t LitPoolInt( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_INT);
+  return l->d.ival;
+}
+
+PAPI
+char LitPoolChar( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_CHAR);
+  return l->d.cval;
+}
+
+PAPI
+int LitPoolBool( LitPool* pool , LitIdx idx ) {
+  const Lit* l = LitPoolIndex(pool,idx);
+  assert(l->type == ELT_TRUE || l->type == ELT_FALSE);
+  return l->type == ELT_TRUE;
+}
+
+PAPI
 int StrToI32( const char* src , int base , int32_t* output ) {
   char* pend;
   long r;

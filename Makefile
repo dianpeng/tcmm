@@ -35,7 +35,7 @@ INSTALL_LIB_DIR   =/usr/lib
 RELEASE_FLAGS     = -I$(PWD) -O3
 RELEASE_LIBS      =
 
-TEST_FLAGS        =-O0 -g3
+TEST_FLAGS        =-O0 -g3 -DCONFIG_UNITTEST -Wall -Werror
 TEST_LIBS         = -lcunitpp -lelf
 
 SAMPLE_FLAGS      =-O3 -g3

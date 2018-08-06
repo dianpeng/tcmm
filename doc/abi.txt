@@ -1,0 +1,38 @@
+This briefly describe the ABI obeyed by the generated code.
+The ABI is largely based on the normal system v abi.
+
+# AMD64
+
+The code generator splits into 2 parts, one is the expression generator it features a simple RA to put as much as possible
+intermediate result into internal scratch registers ; the rest of the code uses a really simple code generator which you
+can typically find in those JIT compiler's baseline compiler.
+
+1) RBX register is reserved for holding context object
+2) RDI register is reserved for holding the result of expression tree generation
+3) RSP register is reserved for pointing at the end of the stack
+4) RBP register is reserved for pointing to the start of the stack
+5) RAX is a scratch register but also used as a register to hold return value
+6) RSI,RCX,RDX,R8-R15 are scratch registers can be used at any time
+7) When calls into another functions registers , except RBX and RBP and RSP , are all caller saved
+
+Function Call:
+
+Calling a *script side* function requires using stack to pass the argument. All the named argument are stack shadowed
+to simplify the GC , ie all the variables that has a name in script is in stack. The stack will be reserved with maximum
+size up front when just entering into the function.
+
+The function prolog is same as most x86 style:
+
+mov rbp,rsp
+sub rsp,SIZE
+
+Assume function protocol is foo(a,b,c,d) then we will have argument mapping as following :
+
+  a ==> rbp + 8*4
+  b ==> rbp + 8*3
+  c ==> rbp + 8*2
+  d ==> rbp + 8*1
+
+  __ret__ ==> rbp
+
+local variables are indexed via rsp + offset

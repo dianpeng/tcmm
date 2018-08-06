@@ -16,21 +16,27 @@ PAPI void TypeSysInit( TypeSys* sys , LitPool* lpool ) {
   // initialize preloaded type
   sys->t_int.base.tag   = EPT_INT;
   sys->t_int.base.size  = sizeof(int32_t);
+  sys->t_int.base.align = sizeof(int32_t);
 
   sys->t_dbl.base.tag   = EPT_DBL;
   sys->t_dbl.base.size  = sizeof(double);
+  sys->t_dbl.base.align = sizeof(double);
 
   sys->t_bool.base.tag  = EPT_BOOL;
   sys->t_bool.base.size = 1;
+  sys->t_bool.base.align= 1;
 
   sys->t_char.base.tag  = EPT_CHAR;
   sys->t_char.base.size = sizeof(char);
+  sys->t_char.base.align= sizeof(char);
 
   sys->t_void.base.tag  = EPT_VOID;
   sys->t_void.base.size = 1;
+  sys->t_void.base.align= 1;
 
   sys->t_str.base.tag   = ET_STR;
-  sys->t_str.base.size  = 0;
+  sys->t_str.base.size  = PTR_SIZE;
+  sys->t_str.base.align = PTR_SIZE;
 }
 
 PAPI void TypeSysDelete( TypeSys* sys ) {
@@ -71,10 +77,19 @@ PAPI const FuncType* TypeSysGetFunc( TypeSys* sys , LitIdx idx ) {
   return NULL;
 }
 
+PAPI const FieldType* TypeSysGetStructField( TypeSys* sys , const StructType* st , LitIdx idx ) {
+  for( size_t i = 0 ; i < st->fsize ; ++i ) {
+    const FieldType* ft = st->fstart + i;
+    if(ft->name == idx)
+      return ft;
+  }
+  return NULL;
+}
+
 PAPI
 ArrType* TypeSysSetArr( TypeSys* sys , const Type* t , size_t length ) {
   assert( TypeSysGetArr(sys,t,length) == NULL );
-  assert( t->base.tag != EPT_VOID );
+  assert( t->tag != EPT_VOID );
 
   {
     ArrType* at = MPoolGrab(&(sys->pool),sizeof(*at));
@@ -85,6 +100,7 @@ ArrType* TypeSysSetArr( TypeSys* sys , const Type* t , size_t length ) {
     at->type      = t;
     at->len       = length;
     at->base.size = t->size * length;
+    at->base.align= t->align;
     return at;
   }
 }
@@ -94,8 +110,9 @@ StructType* TypeSysSetStruct( TypeSys* sys , LitIdx idx ) {
   assert( TypeSysGetStruct(sys,idx) == NULL );
   {
     StructType* st = MPoolGrab(&(sys->pool),sizeof(*st));
-    st->base.tag = ET_STRUCT;
-    st->base.size= 1;
+    st->base.tag   = ET_STRUCT;
+    st->base.size  = 1;
+    st->base.align = 1;
 
     st->fstart   = NULL;
     st->fsize    = 0;
@@ -109,18 +126,31 @@ PAPI
 const FieldType* TypeSysAddStructField( TypeSys* sys , StructType* st , LitIdx idx , const Type* t ) {
   FieldType* ft;
   if(st->fcap == st->fsize) {
-    size_t ncap= ft->fcap ? ft->fcap * 2 : 8;
-    st->fstart = MPoolRealloc(st->fstart,&(sys->pool),st->fsize*sizeof(FieldType),ncap);
+    size_t ncap= st->fcap ? st->fcap * 2 : 8;
+    st->fstart = MPoolRealloc(&(sys->pool),st->fstart,st->fsize*sizeof(FieldType),ncap);
     st->fcap   = ncap;
   }
 
-  ft    = st->fstart + st->size;
+  ft    = st->fstart + st->fsize;
   ft->p = st;
 
   // calculate the padding and offset of each member field
+  if(t->align > st->base.align) {
+    st->base.align = t->align;
+  }
+
+  if(st->fsize > 0) {
+    FieldType* pft = st->fstart + (st->fsize-1);  // previous field's type object
+    size_t ppos    = pft->offset+ pft->t->size;   // where the previous field end
+    size_t npos    = ALIGN(ppos,t->align);        // where the new field starts after padding/alignment
+    ft->offset     = npos;
+  }
 
   ft->t      = t;
   ft->name   = idx;
+
+  ++st->fsize;
+  return ft;
 }
 
 PAPI
@@ -128,10 +158,10 @@ FuncType* TypeSysSetFunc( TypeSys* sys , LitIdx idx ) {
   assert( TypeSysGetFunc(sys,idx) == NULL );
   {
     FuncType* ft = MPoolGrab(&(sys->pool),sizeof(*ft));
-    size_t asz;
 
-    ft->base.tag = ET_FUNC;
-    ft->base.size= 0;
+    ft->base.tag   = ET_FUNC;
+    ft->base.size  = PTR_SIZE;
+    ft->base.align = PTR_SIZE;
 
     LINK_TYPE(sys,ft);
 

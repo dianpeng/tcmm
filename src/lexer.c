@@ -75,8 +75,7 @@ const Lexeme* Lexer2( Lexer* l , int lc , Token tk ) {
   return LexerError(l,"expect char %c here to for token %s",lc,TokenGetStr(tk));
 }
 
-static
-int IsEscChar( int c ) {
+PAPI int LexerIsEscChar( int c ) {
   switch(c) {
     case 't':
     case 'v':
@@ -92,8 +91,7 @@ int IsEscChar( int c ) {
   }
 }
 
-static
-int EscChar( int c ) {
+PAPI int LexerEscChar( int c ) {
   switch(c) {
     case 't' : return '\t';
     case 'v' : return '\v';
@@ -147,9 +145,9 @@ const Lexeme* LexerChar( Lexer* l ) {
 
   if(c == '\\') {
     int nc = l->src[p+1];
-    if(IsEscChar(nc)) {
+    if(LexerIsEscChar(nc)) {
       ++p;
-      v = EscChar(nc);
+      v = LexerEscChar(nc);
     } else {
       return LexerError(l,"unknown escape character %c",nc);
     }
@@ -183,8 +181,8 @@ const Lexeme* LexerStr( Lexer* l ) {
   for( ; (c = l->src[pos]) ; pos++ ) {
     switch(c) {
       case '\\':
-        if(IsEscChar(l->src[pos+1])) {
-          pc = EscChar(l->src[pos+1]);
+        if(LexerIsEscChar(l->src[pos+1])) {
+          pc = LexerEscChar(l->src[pos+1]);
           pos++;
         } else {
           pc = '\\';
@@ -274,8 +272,8 @@ int CmpKeyword( Lexer* l , const char* R ) {
 
 static
 const Lexeme* LexerId( Lexer* l ) {
-  size_t pos = l->pos;
-  int      c = l->src[pos+1];
+  size_t pos = l->pos+1;
+  int      c = l->src[pos];
   while(IsIdRChar(c)) {
     c = l->src[++pos];
   }
@@ -295,10 +293,14 @@ const Lexeme* LexerKeywordOrId( Lexer* l ) {
     case 'b':
       if((r = CmpKeyword(l,"ool")) >0)
         return LexerR(l,TK_BOOL,r);
+      else if((r = CmpKeyword(l,"reak")) >0)
+        return LexerR(l,TK_BREAK,r);
       goto id;
     case 'c':
       if((r = CmpKeyword(l,"har")) >0)
         return LexerR(l,TK_CHAR,r);
+      else if((r = CmpKeyword(l,"ontinue")) >0)
+        return LexerR(l,TK_CONTINUE,r);
       goto id;
     case 'd':
       if((r = CmpKeyword(l,"ouble")) >0)
@@ -329,6 +331,8 @@ const Lexeme* LexerKeywordOrId( Lexer* l ) {
     case 's':
       if((r = CmpKeyword(l,"tring")) >0)
         return LexerR(l,TK_STR,r);
+      else if((r = CmpKeyword(l,"truct")) >0)
+        return LexerR(l,TK_STRUCT,r);
       goto id;
     case 't':
       if((r = CmpKeyword(l,"rue")) >0)

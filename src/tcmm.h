@@ -77,6 +77,13 @@ PAPI LitIdx LitPoolGetId    ( LitPool* , const char* , const char* );
 #define LitPoolGetTrue(POOL)  1
 PAPI const Lit* LitPoolIndex  ( LitPool* , LitIdx );
 
+PAPI const char* LitPoolStr ( LitPool* , LitIdx );
+PAPI const char* LitPoolId  ( LitPool* , LitIdx );
+PAPI double      LitPoolDbl ( LitPool* , LitIdx );
+PAPI int32_t     LitPoolInt ( LitPool* , LitIdx );
+PAPI char        LitPoolChar( LitPool* , LitIdx );
+PAPI int         LitPoolBool( LitPool* , LitIdx );
+
 PAPI int StrToI32( const char* , int , int32_t* );
 PAPI int StrToDbl( const char* , double* );
 
@@ -144,7 +151,10 @@ PAPI const char* ReportError( const char* ,
   XX(TK_ELIF     ,"elif")       \
   XX(TK_ELSE     ,"else"  )     \
   XX(TK_FOR      ,"for"   )     \
+  XX(TK_BREAK    ,"break" )     \
+  XX(TK_CONTINUE ,"continue")   \
   XX(TK_RETURN   ,"return")     \
+  XX(TK_STRUCT   ,"struct")     \
   XX(TK_ERROR    ,"[error]")    \
   XX(TK_EOF      ,"[eof]"  )
 
@@ -177,6 +187,9 @@ PAPI void LexerInit( Lexer* , LitPool* , const char* );
 PAPI const Lexeme* LexerNext( Lexer* );
 PAPI void LexerDelete( Lexer* );
 
+PAPI int LexerIsEscChar( int );
+PAPI int LexerEscChar  ( int );
+
 /* -------------------------------------------------------
  * Type
  * ------------------------------------------------------*/
@@ -202,6 +215,7 @@ typedef struct _Type {
   struct _Type* next;
   EType          tag;
   size_t        size;
+  size_t       align;
 } Type;
 
 typedef struct _PrimitiveType {
@@ -221,7 +235,7 @@ typedef struct _FieldType {
 
 typedef struct _StructType {
   Type               base;
-  const FieldType* fstart;
+  FieldType*       fstart;
   size_t            fsize;
   size_t             fcap;
   LitIdx             name;
@@ -278,6 +292,9 @@ PAPI
 const StructType* TypeSysGetStruct( TypeSys* , LitIdx );
 
 PAPI
+const FieldType* TypeSysGetStructField( TypeSys* , const StructType* , LitIdx );
+
+PAPI
 const ArrType* TypeSysGetArr   ( TypeSys* , const Type* , size_t length );
 
 PAPI
@@ -317,7 +334,7 @@ typedef enum _ESymType {
   ST_ARG,
   ST_GVAR,
   ST_LVAR,
-  ST_FIELD,
+  ST_DEFINE,
   ST_UNKNOWN
 } ESymType;
 
@@ -334,30 +351,53 @@ typedef struct _SymInfo {
 } SymInfo;
 
 typedef struct _Sym {
-  struct _Sym* next;
   SymInfo      info;
   ESymType     type;
 } Sym;
 
 typedef struct _LVar {
-  Sym base;         // symbol of the local varaibles
+  Sym      base;    // symbol of the local varaibles
   size_t offset;    // offset from the frame registers
 } LVar;
 
 typedef struct _GVar {
-  Sym base;         // symbol of the global variables
+  Sym      base;    // symbol of the global variables
   size_t offset;    // offset from the global variable region
 } GVar;
 
 typedef struct _Arg {
-  Sym base;
+  Sym      base;
   size_t offset;
 } Arg;
 
+typedef struct _Define {
+  Sym base;
+} Define;
+
 typedef struct _SymTable {
-  Sym* sym;
-  size_t sz;
+  Sym**   sym;
+  size_t   sz;
+  size_t  cap;
+  MPool*  pool;
 } SymTable;
+
+PAPI void SymTableInit  ( SymTable* , MPool* );
+PAPI void SymTableDelete( SymTable* );
+
+typedef enum _ESymTableOp {
+  EST_OP_INSERT,
+  EST_OP_FIND
+} ESymTableOp;
+
+PAPI ESymTableOp SymTableSetLVar( SymTable* , LitIdx , LVar** );
+PAPI ESymTableOp SymTableSetGVar( SymTable* , LitIdx , GVar** );
+PAPI ESymTableOp SymTableSetArg ( SymTable* , LitIdx , Arg**   );
+PAPI ESymTableOp SymTableSetDefine( SymTable* , LitIdx , Define** );
+
+PAPI const LVar*   SymTableFindLVar  ( SymTable* , LitIdx );
+PAPI const GVar*   SymTableFindGVar  ( SymTable* , LitIdx );
+PAPI const Arg*    SymTableFindArg   ( SymTable* , LitIdx );
+PAPI const Define* SymTableFindDefine( SymTable* , LitIdx );
 
 // Scope representation
 typedef struct _Scp {
@@ -366,19 +406,21 @@ typedef struct _Scp {
 } Scp;
 
 typedef struct _GlbScp {
-  Scp scp;
+  Scp     base;
   SymTable stb;
 } GlbScp;
 
 typedef struct _FuncScp {
-  Scp scp;
-  SymTable stb;
+  Scp             base;
+  SymTable         stb;
   const FuncType* type;
+  size_t     max_stksz; // maximum stack size
 } FuncScp;
 
 typedef struct _LexScp {
-  Scp scp;
+  Scp      base;
   SymTable stb;
+  size_t   vsz;         // all variable accumulated size that is nested up to now
   uint32_t in_loop : 1;
   uint32_t is_loop : 1;
 } LexScp;
@@ -387,97 +429,168 @@ typedef struct _LexScp {
  * Parser
  * ------------------------------------------------------*/
 
-// expression AST definition. For expression code gen we do a
-// 2 pass generation ; the 1st pass will convert text data into
-// an AST representation and the 2nd pass will constant fold the
-// expression if needed and then apply a relative better register
-// allocator for expression generation. Rest of the statements in
-// langauge will do naive code generation directly to machine code
-typedef enum _EExprType {
-  EET_LIT,
-  EET_ID,
-  EET_PREFIX,
-  EET_UNARY,
-  EET_BINARY,
-  EET_TERANRY
-} EExprType;
+typedef enum _ENodeType {
+  // expression
+  ENT_LIT,
+  ENT_ID,
+  ENT_STRULIT,
+  ENT_PREFIX,
+  ENT_UNARY,
+  ENT_BINARY,
+  ENT_TERNARY
+} ENodeType;
 
-typedef struct _Expr {
-  EExprType type;
-  size_t nline;
-  size_t nchar;
+typedef struct _Node {
+  ENodeType type;
   size_t dbg_start;
   size_t dbg_end;
-} Expr;
+} Node;
 
-typedef struct _ExprLit {
-  Expr    base;
-  LitIdx lit;
-} ExprLit;
+typedef struct _NodeLit {
+  Node    base;
+  LitIdx   lit;
+} NodeLit;
 
-typedef struct _ExprId {
-  Expr    base;
-  Sym*     sym;
-} ExprId;
+typedef struct _NodeId {
+  Node    base;
+  LitIdx  name;
+} NodeId;
 
-typedef struct _ExprStruLitAssign {
-  struct _ExprStruLitAssign* next;
+typedef struct _NodeStruLitAssign {
+  struct _NodeStruLitAssign* next;
   const FieldType* ftype;
-  Expr*            value;
-} ExprStruLitAssign;
+  Node*            value;
+} NodeStruLitAssign;
 
-typedef struct _ExprStruLit {
-  Expr base;
-  const Type* ctype;          // the type of the structure literals
-  ExprStruLitAssign* assign;  // all the field assignment
-} ExprStruLit;
+typedef struct _NodeStruLit {
+  Node base;
+  const StructType* ctype;    // the type of the structure literals
+  NodeStruLitAssign* assign;  // all the field assignment
+} NodeStruLit;
 
-typedef struct _ExprPrefixCompCall {
-  Expr* args[CONFIG_MAX_CALL_ARGS];
+typedef struct _NodePrefixCompCall {
+  Node* args[CONFIG_MAX_CALL_ARGS];
   size_t   sz;
-} ExprPrefixCompCall;
+  size_t   dbg_start;
+  size_t   dbg_end;
+} NodePrefixCompCall;
 
-typedef enum _EExprPrefixCompType {
+typedef enum _ENodePrefixCompType {
   EEPCT_DOT,
   EEPCT_IDX,
   EEPCT_CALL
-} EExprPrefixCompType;
+} ENodePrefixCompType;
 
-typedef struct _ExprPrefixComp {
-  struct _ExprPrefixComp* next;
+typedef struct _NodePrefixComp {
   union {
-    Sym*     dot;
-    Expr* idx;
-    ExprPrefixCompCall call;
+    LitIdx  name;
+    Node*    idx;
+    NodePrefixCompCall* call;
   } c;
-  EExprPrefixCompType comp_type;
-} ExprPrefixComp;
+  ENodePrefixCompType comp_type;
+} NodePrefixComp;
 
-typedef struct _ExprPrefix {
-  Expr     base;
-  LitIdx   init;
-  ExprPrefixComp* rest;
-} ExprPrefix;
+typedef struct _NodePrefix {
+  Node            base;
+  LitIdx          init;
+  NodePrefixComp* comp;
+  size_t          comp_sz;
+  size_t          comp_cap;
+} NodePrefix;
 
-typedef struct _ExprUnary {
-  Expr       base;
-  const Expr* opr;
+typedef struct _NodeUnary {
+  Node       base;
+  const Node* opr;
   Token        op;
-} ExprUnary;
+} NodeUnary;
 
-typedef struct _ExprBinary {
-  Expr     base;
-  const Expr* lhs;
-  const Expr* rhs;
+typedef struct _NodeBinary {
+  Node     base;
+  const Node* lhs;
+  const Node* rhs;
   Token        op;
-} ExprBinary;
+} NodeBinary;
 
-typedef struct _ExprTernary {
-  Expr     base;
-  const Expr* first;
-  const Expr* second;
-  const Expr* third;
-} ExprTernary;
+typedef struct _NodeTernary {
+  Node     base;
+  const Node* first;
+  const Node* second;
+  const Node* third;
+} NodeTernary;
 
+/** statements **/
+typedef struct _NodeChunk {
+  Node** stmt;
+  size_t   sz;
+  size_t  cap;
+} NodeChunk;
+
+typedef NodePrefix NodeCall;
+
+typedef struct _NodeLocal {
+  Node base;
+  LitIdx name;
+  Node*   rhs;
+} NodeLocal;
+
+typedef NodePrefix NodeAssignLHS;
+
+typedef struct _NodeAssign {
+  Node base;
+  NodeAssignLHS* lhs;
+  Node*          rhs;
+  int op;
+} NodeAssign;
+
+typedef struct _NodeIfBranch {
+  Node* cond;
+  NodeChunk* chunk;
+} NodeIfBranch;
+
+typedef struct _NodeIf {
+  Node            base;
+  NodeIfBranch* chains;
+  size_t            sz;
+  size_t           cap;
+} NodeIf;
+
+typedef struct _NodeFor {
+  Node            base;
+  Node*           init;
+  Node*           cond;
+  Node*           step;
+} NodeFor;
+
+typedef struct _NodeBreak {
+  Node            base;
+} NodeBreak;
+
+typedef struct _NodeContinue {
+  Node            base;
+} NodeContinue;
+
+typedef struct _NodeReturn {
+  Node            base;
+  Node*           expr;
+} NodeReturn;
+
+typedef struct _NodeFunction {
+  Node            base;
+  const FuncType* type;
+  NodeChunk*     chunk;
+} NodeFunction;
+
+typedef struct _Parser {
+  LitPool* lpool;
+  TypeSys*  tsys;
+  Lexer    lexer;
+  MPool     pool;
+
+  const char* err;
+} Parser;
+
+PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* );
+PAPI void ParserInit( Parser* , LitPool* , TypeSys* , const char* );
+PAPI void ParserDelete( Parser* );
 
 #endif // TCMM_H_

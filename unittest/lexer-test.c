@@ -234,7 +234,7 @@ TEST(Lexer,Str) {
 }
 
 TEST(Lexer,Keyword) {
-  const char* str = "int char double string void bool true false if elif else for return";
+  const char* str = "int char double string void bool true false if elif else for return struct";
   LitPool lpool;
   Lexer   l;
   Token tk[] = {
@@ -251,6 +251,7 @@ TEST(Lexer,Keyword) {
     TK_ELSE,
     TK_FOR,
     TK_RETURN,
+    TK_STRUCT,
     TK_EOF
   };
 
