@@ -8,10 +8,10 @@
   } while(0)
 
 
-PAPI void TypeSysInit( TypeSys* sys , LitPool* lpool ) {
+PAPI void TypeSysInit( TypeSys* sys , LitPool* lpool , MPool* pool ) {
   sys->lpool = lpool;
   sys->types = NULL;
-  MPoolInit(&(sys->pool),128,2048);
+  sys->pool  = pool;
 
   // initialize preloaded type
   sys->t_int.base.tag   = EPT_INT;
@@ -40,7 +40,9 @@ PAPI void TypeSysInit( TypeSys* sys , LitPool* lpool ) {
 }
 
 PAPI void TypeSysDelete( TypeSys* sys ) {
-  MPoolDelete(&(sys->pool));
+  sys->types = NULL;
+  sys->pool  = NULL;
+  sys->lpool = NULL;
 }
 
 PAPI const StructType* TypeSysGetStruct( TypeSys* sys , LitIdx idx ) {
@@ -92,7 +94,7 @@ ArrType* TypeSysSetArr( TypeSys* sys , const Type* t , size_t length ) {
   assert( t->tag != EPT_VOID );
 
   {
-    ArrType* at = MPoolGrab(&(sys->pool),sizeof(*at));
+    ArrType* at = MPoolGrab(sys->pool,sizeof(*at));
 
     at->base.tag= ET_ARR;
     LINK_TYPE(sys,at);
@@ -109,7 +111,7 @@ PAPI
 StructType* TypeSysSetStruct( TypeSys* sys , LitIdx idx ) {
   assert( TypeSysGetStruct(sys,idx) == NULL );
   {
-    StructType* st = MPoolGrab(&(sys->pool),sizeof(*st));
+    StructType* st = MPoolGrab(sys->pool,sizeof(*st));
     st->base.tag   = ET_STRUCT;
     st->base.size  = 1;
     st->base.align = 1;
@@ -127,7 +129,7 @@ const FieldType* TypeSysAddStructField( TypeSys* sys , StructType* st , LitIdx i
   FieldType* ft;
   if(st->fcap == st->fsize) {
     size_t ncap= st->fcap ? st->fcap * 2 : 8;
-    st->fstart = MPoolRealloc(&(sys->pool),st->fstart,st->fsize*sizeof(FieldType),ncap);
+    st->fstart = MPoolRealloc(sys->pool,st->fstart,st->fsize*sizeof(FieldType),ncap);
     st->fcap   = ncap;
   }
 
@@ -157,7 +159,7 @@ PAPI
 FuncType* TypeSysSetFunc( TypeSys* sys , LitIdx idx ) {
   assert( TypeSysGetFunc(sys,idx) == NULL );
   {
-    FuncType* ft = MPoolGrab(&(sys->pool),sizeof(*ft));
+    FuncType* ft = MPoolGrab(sys->pool,sizeof(*ft));
 
     ft->base.tag   = ET_FUNC;
     ft->base.size  = PTR_SIZE;
@@ -186,8 +188,8 @@ const FuncTypeArg*
 TypeSysFuncAddArg( TypeSys* sys , FuncType* ft , const Type* t , LitIdx aname ) {
   if(ft->arg_size == ft->arg_cap) {
     size_t ncap = ft->arg_cap == 0 ? 8 : ft->arg_cap * 2;
-    ft->arg     = MPoolRealloc(&(sys->pool),ft->arg,sizeof(FuncType   )*ft->arg_cap,
-                                                    sizeof(FuncTypeArg)*ncap);
+    ft->arg     = MPoolRealloc(sys->pool,ft->arg,sizeof(FuncType   )*ft->arg_cap,
+                                                 sizeof(FuncTypeArg)*ncap);
     ft->arg_cap = ncap;
   }
   ft->arg[ft->arg_size].type = t;

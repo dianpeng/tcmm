@@ -107,32 +107,29 @@ const char* MPoolStrSub( MPool* pool , const char* start , const char* end ) {
 }
 
 PAPI
-void LitPoolInit( LitPool* pool ) {
-  pool->lits = malloc(sizeof(Lit) * CONFIG_LIT_POOL_SIZE);
+void LitPoolInit( LitPool* pool , MPool* mpool ) {
+  pool->lits = MPoolGrab(mpool,sizeof(Lit) * CONFIG_LIT_POOL_SIZE);
   pool->cap  = CONFIG_LIT_POOL_SIZE;
-
   pool->sz   = 2;
   pool->lits[0].type = ELT_FALSE;
   pool->lits[1].type = ELT_TRUE;
-
-  MPoolInit(&(pool->mpool),128,1024*16);
+  pool->mpool = mpool;
 }
 
 PAPI
 void LitPoolDelete( LitPool* pool ) {
-  free(pool->lits);
   pool->lits = NULL;
   pool->sz   = 0;
   pool->cap  = 0;
-
-  MPoolDelete(&(pool->mpool));
+  pool->mpool= NULL;
 }
 
 static
 Lit* LitPoolInsert( LitPool* pool ) {
   if(pool->sz == pool->cap) {
-    pool->lits = realloc(pool->lits,sizeof(Lit) * pool->cap * 2);
-    pool->cap *= 2;
+    size_t ncap = pool->cap * 2;
+    pool->lits = MPoolRealloc(pool->mpool,pool->lits,sizeof(Lit)*pool->sz,ncap*sizeof(Lit));
+    pool->cap  = ncap;
   }
   return pool->lits + (pool->sz++);
 }
@@ -202,7 +199,7 @@ LitIdx LitPoolGetStr( LitPool* pool , const char* str ) {
   {
     Lit* l  = LitPoolInsert(pool);
     l->type = ELT_STR;
-    l->d.str= MPoolStrDup(&(pool->mpool),str);
+    l->d.str= MPoolStrDup(pool->mpool,str);
     return pool->sz - 1;
   }
 }
@@ -221,7 +218,7 @@ LitIdx LitPoolGetId( LitPool* pool , const char* start , const char* end ) {
   {
     Lit* l  = LitPoolInsert(pool);
     l->type = ELT_ID;
-    l->d.str= MPoolStrSub(&(pool->mpool),start,end);
+    l->d.str= MPoolStrSub(pool->mpool,start,end);
     return pool->sz - 1;
   }
 }

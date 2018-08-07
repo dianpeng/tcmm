@@ -448,23 +448,9 @@ static Node* ParseTernary( Parser* p ) {
 static Node* ParseExpr( Parser* p ) { return ParseTernary(p); }
 
 /** ----------------------------------------------------------------
- * Helper functions to do unittest
+ * ToJSON
  * ----------------------------------------------------------------*/
-#ifdef CONFIG_UNITTEST
-
-Node* ParseExpression( Parser* p ) {
-  return ParseExpr(p);
-}
-
-static void _NodeToJSON( Parser* p, FILE* , const Node* );
-
-// Dump the expression into JSON format for better visualization or
-// unittest purpose since JSON is a universally parsable format and
-// it is easy to hook it into other toolings
-void NodeToJSON( Parser* p, FILE* output , const Node* e ) {
-  _NodeToJSON(p,output,e);
-}
-
+static void _NodeToJSON  ( Parser* p, FILE* , const Node* );
 static void _LitToJSON   ( Parser* p, FILE* , const NodeLit*    );
 static void _IdToJSON    ( Parser* p, FILE* , const NodeId*     );
 static void _SLitToJSON  ( Parser* p, FILE* , const NodeStruLit*);
@@ -472,6 +458,13 @@ static void _PrefixToJSON( Parser* p, FILE* , const NodePrefix* );
 static void _UnaToJSON   ( Parser* p, FILE* , const NodeUnary*  );
 static void _BinToJSON   ( Parser* p, FILE* , const NodeBinary* );
 static void _TenToJSON   ( Parser* p, FILE* , const NodeTernary* );
+
+// Dump the expression into JSON format for better visualization or
+// unittest purpose since JSON is a universally parsable format and
+// it is easy to hook it into other toolings
+void NodeToJSON( Parser* p, FILE* output , const Node* e ) {
+  _NodeToJSON(p,output,e);
+}
 
 static void _NodeToJSON( Parser* p, FILE* f, const Node* e ) {
   switch(e->type) {
@@ -653,4 +646,9 @@ static void _TenToJSON( Parser*  p , FILE* f , const NodeTernary* e ) {
   fprintf(f,"}");
 }
 
+
+#ifdef CONFIG_UNITTEST
+Node* ParseExpression( Parser* p ) {
+  return ParseExpr(p);
+}
 #endif // CONFIG_UNITTEST

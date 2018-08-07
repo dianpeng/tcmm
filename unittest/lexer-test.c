@@ -3,6 +3,8 @@
 
 #define array_size(ARR) (sizeof(ARR)/sizeof((ARR)[0]))
 
+MPool* mpool;
+
 TEST(Lexer,TkOp) {
   {
     const char* str = "+-*/% ++ -- < <= > >= != ! = == && || . ! , ; ? : &";
@@ -37,7 +39,7 @@ TEST(Lexer,TkOp) {
     Lexer l;
     LitPool lpool;
 
-    LitPoolInit(&lpool);
+    LitPoolInit(&lpool,mpool);
     LexerInit  (&l,&lpool,str);
 
     for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
@@ -67,7 +69,7 @@ TEST(Lexer,TkOp) {
     Lexer l;
     LitPool lpool;
 
-    LitPoolInit(&lpool);
+    LitPoolInit(&lpool,mpool);
     LexerInit  (&l,&lpool,str);
 
     for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
@@ -105,7 +107,7 @@ TEST(Lexer,NumNormal) {
   Lexer l;
   LitPool lpool;
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   for( size_t i = 0 ; i < array_size(r) ; ++i ) {
@@ -130,7 +132,7 @@ TEST(Lexer,Int32Overflow) {
   Lexer l;
   LitPool lpool;
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
   LexerNext(&l);
   ASSERT_EQ(TK_ERROR,l.lexeme.tk);
@@ -144,7 +146,7 @@ TEST(Lexer,Boolean) {
   LitPool lpool;
   Lexer l;
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   LexerNext(&l);
@@ -172,7 +174,7 @@ TEST(Lexer,Char) {
     { .tk = TK_EOF }
   };
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
@@ -193,7 +195,7 @@ TEST(Lexer,EmptyChar) {
   LitPool lpool;
   Lexer   l;
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   ASSERT_EQ(TK_ERROR,LexerNext(&l)->tk);
@@ -217,7 +219,7 @@ TEST(Lexer,Str) {
     { .tk = TK_EOF }
   };
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
@@ -255,7 +257,7 @@ TEST(Lexer,Keyword) {
     TK_EOF
   };
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
@@ -285,7 +287,7 @@ TEST(Lexer,Id) {
     { .tk = TK_EOF }
   };
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
@@ -309,7 +311,7 @@ TEST(Lexer,Comment) {
   LitPool lpool;
   Lexer   l;
 
-  LitPoolInit(&lpool);
+  LitPoolInit(&lpool,mpool);
   LexerInit  (&l,&lpool,str);
 
   LexerNext(&l);
@@ -322,5 +324,11 @@ TEST(Lexer,Comment) {
 }
 
 int main( int argc , char* argv[] ) {
-  return RunAllTests(argc,argv);
+  int ret;
+  MPool p;
+  MPoolInit(&p,8,32);
+  mpool = &p;
+  ret = RunAllTests(argc,argv);
+  MPoolDelete(&p);
+  return ret;
 }

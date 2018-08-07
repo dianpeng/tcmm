@@ -4,10 +4,12 @@
 
 TEST(Type,Primitive) {
   TypeSys tsys;
+  MPool   mpool;
   LitPool lpool;
 
-  LitPoolInit(&lpool);
-  TypeSysInit(&tsys,&lpool);
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&lpool,&mpool);
+  TypeSysInit(&tsys,&lpool,&mpool);
 
   ASSERT_EQ(EPT_INT,TypeSysGetInt(&tsys)->base.tag);
   ASSERT_EQ(sizeof(int),TypeSysGetInt(&tsys)->base.size);
@@ -26,14 +28,17 @@ TEST(Type,Primitive) {
 
   LitPoolDelete(&lpool);
   TypeSysDelete(&tsys);
+  MPoolDelete(&mpool);
 }
 
 TEST(Type,Array) {
+  MPool mpool;
   TypeSys tsys;
   LitPool lpool;
 
-  LitPoolInit(&lpool);
-  TypeSysInit(&tsys,&lpool);
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&lpool,&mpool);
+  TypeSysInit(&tsys,&lpool,&mpool);
 
   {
     /**
@@ -50,6 +55,7 @@ TEST(Type,Array) {
 
   LitPoolDelete(&lpool);
   TypeSysDelete(&tsys);
+  MPoolDelete(&mpool);
 }
 
 #if 0

@@ -1,5 +1,6 @@
 #ifndef TCMM_H_
 #define TCMM_H_
+#include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -61,12 +62,12 @@ typedef struct _LitPool {
   Lit* lits;
   size_t sz;
   size_t cap;
-  MPool mpool;
+  MPool* mpool;
 } LitPool;
 
 typedef size_t LitIdx;
 
-PAPI void   LitPoolInit     ( LitPool* );
+PAPI void   LitPoolInit     ( LitPool* , MPool* );
 PAPI void   LitPoolDelete   ( LitPool* );
 PAPI LitIdx LitPoolGetDouble( LitPool* , double );
 PAPI LitIdx LitPoolGetInt   ( LitPool* , int32_t);
@@ -270,12 +271,12 @@ typedef struct _TypeSys {
   PrimitiveType t_bool;
   PrimitiveType t_void;
   StrType       t_str;
-  MPool          pool;
+  MPool*         pool;
   LitPool*      lpool;
 } TypeSys;
 
 PAPI
-void TypeSysInit( TypeSys* , LitPool* );
+void TypeSysInit( TypeSys* , LitPool* , MPool* );
 
 PAPI
 void TypeSysDelete( TypeSys* );
@@ -383,21 +384,14 @@ typedef struct _SymTable {
 
 PAPI void SymTableInit  ( SymTable* , MPool* );
 PAPI void SymTableDelete( SymTable* );
-
-typedef enum _ESymTableOp {
-  EST_OP_INSERT,
-  EST_OP_FIND
-} ESymTableOp;
-
-PAPI ESymTableOp SymTableSetLVar( SymTable* , LitIdx , LVar** );
-PAPI ESymTableOp SymTableSetGVar( SymTable* , LitIdx , GVar** );
-PAPI ESymTableOp SymTableSetArg ( SymTable* , LitIdx , Arg**   );
-PAPI ESymTableOp SymTableSetDefine( SymTable* , LitIdx , Define** );
-
-PAPI const LVar*   SymTableFindLVar  ( SymTable* , LitIdx );
-PAPI const GVar*   SymTableFindGVar  ( SymTable* , LitIdx );
-PAPI const Arg*    SymTableFindArg   ( SymTable* , LitIdx );
-PAPI const Define* SymTableFindDefine( SymTable* , LitIdx );
+PAPI const LVar*   SymTableGetLVar  ( SymTable* , LitIdx );
+PAPI const GVar*   SymTableGetGVar  ( SymTable* , LitIdx );
+PAPI const Arg*    SymTableGetArg   ( SymTable* , LitIdx );
+PAPI const Define* SymTableGetDefine( SymTable* , LitIdx );
+PAPI LVar*         SymTableSetLVar  ( SymTable* , LitIdx , const Type* );
+PAPI GVar*         SymTableSetGVar  ( SymTable* , LitIdx , const Type* );
+PAPI Arg*          SymTableSetArg   ( SymTable* , LitIdx , const Type* );
+PAPI Define*       SymTableSetDefine( SymTable* , LitIdx , const Type* );
 
 // Scope representation
 typedef struct _Scp {
@@ -590,6 +584,8 @@ typedef struct _Parser {
 } Parser;
 
 PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* );
+PAPI void NodeToJSON( Parser* , FILE* , const Node* );
+
 PAPI void ParserInit( Parser* , LitPool* , TypeSys* , const char* );
 PAPI void ParserDelete( Parser* );
 

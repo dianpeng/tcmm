@@ -4,17 +4,18 @@
 #include <cunitpp.h>
 
 extern Node* ParseExpression( Parser* );
-extern void  NodeToJSON( Parser* , FILE* , const Node* );
 
 TEST(Parser,Simple) {
+  MPool   mpool;
   LitPool lpool;
   TypeSys  tsys;
   Parser      p;
   Node*     exp;
   const char* src = "true || false + 1";
 
-  LitPoolInit(&lpool);
-  TypeSysInit(&tsys,&lpool);
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&lpool,&mpool);
+  TypeSysInit(&tsys,&lpool,&mpool);
   ParserInit (&p,&lpool,&tsys,src);
 
   exp = ParseExpression(&p);

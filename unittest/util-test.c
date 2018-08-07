@@ -58,8 +58,10 @@ TEST(MPool,Stress) {
 }
 
 TEST(LitPool,Insert) {
+  MPool   mpool;
   LitPool pool;
-  LitPoolInit(&pool);
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&pool,&mpool);
 
   ASSERT_EQ(2,pool.sz);
 
@@ -75,12 +77,15 @@ TEST(LitPool,Insert) {
   ASSERT_EQ(ELT_TRUE ,LitPoolIndex(&pool,LitPoolGetTrue (&pool))->type);
 
   LitPoolDelete(&pool);
+  MPoolDelete(&mpool);
 }
 
 static void DoStrOrIdTest ( int t ) {
   char buf[1024];
+  MPool   mpool;
   LitPool pool;
-  LitPoolInit(&pool);
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&pool,&mpool);
   ASSERT_EQ(2,pool.sz);
 
   for( size_t i = 0 ; i < CONFIG_LIT_POOL_SIZE * 10 ; ++i ) {
@@ -102,6 +107,7 @@ static void DoStrOrIdTest ( int t ) {
   ASSERT_EQ(CONFIG_LIT_POOL_SIZE*10+2,pool.sz);
 
   LitPoolDelete(&pool);
+  MPoolDelete(&mpool);
 }
 
 TEST(LitPool,Str) {
