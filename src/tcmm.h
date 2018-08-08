@@ -393,6 +393,8 @@ typedef struct _NodeId {
   Node         base;
   LitIdx       name;
   TypeInfo    tinfo;
+  IdRef         ref;
+  const Type* ctype;
 } NodeId;
 
 typedef struct _NodeStruLitAssign {
