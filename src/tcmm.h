@@ -390,7 +390,15 @@ typedef enum _ENodeType {
   ENT_TERNARY,
   // stmt
   ENT_LOCAL,
-  ENT_ASSIGN
+  ENT_ASSIGN,
+  ENT_IF,
+  ENT_FOR,
+  ENT_CONTINUE,
+  ENT_BREAK,
+  ENT_RETURN,
+  ENT_FUNC,
+  ENT_GLOBAL,
+  ENT_FILE
 } ENodeType;
 
 typedef struct _Node {
@@ -465,7 +473,7 @@ typedef struct _NodeBinary {
 } NodeBinary;
 
 typedef struct _NodeTernary {
-  Node     base;
+  Node         base;
   const Node* first;
   const Node* second;
   const Node* third;
@@ -533,6 +541,17 @@ typedef struct _NodeFunction {
   NodeChunk*     chunk;
 } NodeFunction;
 
+typedef struct _NodeGlobal {
+  Node            base;
+  const Type*     type;
+  Node*          value;
+} NodeGlobal;
+
+typedef struct _NodeFile {
+  Node            base;
+  NodeChunk*     chunk;
+} NodeFile;
+
 struct _Scp;
 
 typedef struct _Parser {
@@ -561,7 +580,7 @@ typedef struct _Scp {
 } Scp;
 
 typedef struct _GlbScp {
-  Scp      base;
+  Scp base;
 } GlbScp;
 
 typedef struct _FuncScp {

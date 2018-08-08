@@ -17,7 +17,7 @@
 #define EXPECTR(P,TK,STMT)                                               \
   do {                                                                   \
     if((TK) != LEX(P)->tk) {                                             \
-      ParserError((P),"expect token %s", TokenGetStr(L(P)->lexeme.tk));  \
+      ParserError((P),"expect token %s", TokenGetStr(LEX(p)->tk));       \
       STMT;                                                              \
     }                                                                    \
     NEXT(P);                                                             \
@@ -66,15 +66,15 @@ static LexScp* LexScpEnter( Parser* p , LexScp* lscp , int is_loop ) {
   lscp->base.type = SCPT_LEXICAL;
   SymTableInit(&(lscp->base.stb),p->pool);
 
-  if(pscp->base.type == SCPT_LEXICAL) {
+  if(pscp->type == SCPT_LEXICAL) {
     LexScp* pp = (LexScp*)pscp;
     // accumulated variable size
-    lscp->vsz = pp->vsz + pp->stb.sz;
+    lscp->vsz = pp->vsz + pp->base.stb.sz;
     lscp->in_loop = is_loop || pp->in_loop || pp->is_loop;
     lscp->is_loop = is_loop;
     lscp->fscp    = pp->fscp;
   } else {
-    assert(pscp->base.type == SCPT_FUNC);
+    assert(pscp->type == SCPT_FUNC);
     assert(is_loop == 0);
     {
       FuncScp* fscp = (FuncScp*)pscp;
@@ -91,7 +91,7 @@ static LexScp* LexScpEnter( Parser* p , LexScp* lscp , int is_loop ) {
   return lscp;
 }
 
-static FuncScp* FuncScpEnter( Parser* p , FuncScp* scp , const Type* ft ) {
+static FuncScp* FuncScpEnter( Parser* p , FuncScp* scp , const FuncType* ft ) {
   assert(p->scp->type == SCPT_GLOBAL);
   {
     GlbScp* pscp = (GlbScp*)(p->scp);
@@ -109,30 +109,30 @@ static FuncScp* FuncScpEnter( Parser* p , FuncScp* scp , const Type* ft ) {
 static Scp* ScpLeave( Parser* p ) {
   Scp* scp = p->scp;
 
-  if(scp->base.type == SCPT_LEXICAL) {
+  if(scp->type == SCPT_LEXICAL) {
     LexScp* lscp = (LexScp*)(scp);
 
-    size_t max_vsz = lscp->vsz + lscp->stb.sz;
+    size_t max_vsz = lscp->vsz + lscp->base.stb.sz;
     if(max_vsz > lscp->fscp->max_stksz)
       lscp->fscp->max_stksz = max_vsz;
   }
-  SymTableDelete(&(scp->base.stb));
-  p->scp = scp->base.prev;
+  SymTableDelete(&(scp->stb));
+  p->scp = scp->prev;
   return p->scp;
 }
 
 static inline FuncScp* CurFScp( Parser* p ) {
-  assert( p->scp && p->scp->base.type == SCPT_FUNC );
+  assert( p->scp && p->scp->type == SCPT_FUNC );
   return (FuncScp*)(p->scp);
 }
 
 static inline LexScp* CurLScp ( Parser* p ) {
-  assert( p->scp && p->scp->base.type == SCPT_LEXICAL );
+  assert( p->scp && p->scp->type == SCPT_LEXICAL );
   return (LexScp*)(p->scp);
 }
 
 static inline GlbScp* CurGScp ( Parser* p ) {
-  assert( p->scp && p->scp->base.type == SCPT_GLOBAL );
+  assert( p->scp && p->scp->type == SCPT_GLOBAL );
   return (GlbScp*)(p->scp);
 }
 
@@ -146,35 +146,35 @@ static inline FuncScp* FScp( Parser* p ) {
 }
 
 // resolve a symbol name based on a literal index
-static inline Sym* FindSym( Parser* p , LitIdx name ) {
+static inline const Sym* FindSym( Parser* p , LitIdx name ) {
   Scp* cscp = p->scp;
   while(cscp) {
-    Sym* ret = SymTableGet(&(cscp->stb),name);
+    const Sym* ret = SymTableGet(&(cscp->stb),name);
     if(ret) return ret;
-    cscp = cscp->base.prev;
+    cscp = cscp->prev;
   }
   return NULL;
 }
 
 static inline LVar* DefineLVar( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->base.type == SCPT_LEXICAL);
-  if(SymTableGetLVar(&(p->scp->base.stb),name))
+  assert(p->scp->type == SCPT_LEXICAL);
+  if(SymTableGetLVar(&(p->scp->stb),name))
     return NULL;
-  return SymTableSetLVar(&(p->scp->base.stb),name,t);
+  return SymTableSetLVar(&(p->scp->stb),name,t);
 }
 
 static inline GVar* DefineGVar( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->base.type == SCPT_GLOBAL);
-  if(SymTableGetGVar(&(p->scp->base.stb),name))
+  assert(p->scp->type == SCPT_GLOBAL);
+  if(SymTableGetGVar(&(p->scp->stb),name))
     return NULL;
-  return SymTableSetGVar(&(p->scp->base.stb),name,t);
+  return SymTableSetGVar(&(p->scp->stb),name,t);
 }
 
 static inline Arg* DefineArg( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->base.type == SCPT_FUNCTION);
-  if(SymTableGetArg(&(p->scp->base.stb),name))
+  assert(p->scp->type == SCPT_FUNC);
+  if(SymTableGetArg(&(p->scp->stb),name))
     return NULL;
-  return SymTableSetArg(&(p->scp->base.stb),name,t);
+  return SymTableSetArg(&(p->scp->stb),name,t);
 }
 
 /** ------------------------------------------------
@@ -571,15 +571,6 @@ static Node* ParseExpr( Parser* p ) { return ParseTernary(p); }
 /** ----------------------------------------------------------------
  * Statment
  * ----------------------------------------------------------------*/
-static void ChunkAddStmt( Parser* p , NodeChunk* ck , Node* stmt ) {
-  if(ck->sz == ck->cap) {
-    size_t ncap = ck->cap ? ck->cap * 2 : 2;
-    ck->stmt = MPoolRealloc(p->pool,ck->stmt,sizeof(Node*)*ck->sz,ncap*sizeof(Node*));
-    ck->cap  = ncap;
-  }
-  ck->cap[ck->sz++] = stmt;
-}
-
 // Parse a declaration. A declaration is something as following :
 // type id array-modifier
 static int ParseVDec( Parser* , const Type** , LitIdx* ref );
@@ -624,7 +615,7 @@ static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
         tid = LEX(p)->lit;
         *out_tp = (const Type*)TypeSysGetStruct(p->tsys,tid);
         if(!*out_tp) {
-          ParserError(p,"struct type %s is not found",LitPoolId(p->tsys,tid));
+          ParserError(p,"struct type %s is not found",LitPoolId(p->lpool,tid));
           return -1;
         }
       }
@@ -655,7 +646,7 @@ static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
       return -1;
     }
 
-    len = (size_t)LitPoolInt(p->tsys,LEX(p)->lit);
+    len = (size_t)LitPoolInt(p->lpool,LEX(p)->lit);
     if(len == 0) {
       ParserError(p,"array length cannot be 0");
       return -1;
@@ -663,7 +654,7 @@ static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
 
     // for array if it is not defined, then just try to define it
     {
-      ArrType* at = TypeSysGetArr(p->tsys,*out_tp,len);
+      const ArrType* at = TypeSysGetArr(p->tsys,*out_tp,len);
       if(!at) {
         at = TypeSysSetArr(p->tsys,*out_tp,len);
         *out_tp = (const Type*)(at);
@@ -711,9 +702,9 @@ static Node* ParseLocal( Parser* p ) {
 }
 
 static int IsNodeLHS( Node* n ) {
-  if(lhs->base.type == ENT_ID || lhs->base.type == ENT_PREFIX) {
-    if(lhs->base.type == ENT_PREFIX) {
-      NodePrefix* np = (NodePrefix*)(lhs);
+  if(n->type == ENT_ID || n->type == ENT_PREFIX) {
+    if(n->type == ENT_PREFIX) {
+      NodePrefix* np = (NodePrefix*)(n);
       // function call cannot be used as LHS
       if(np->comp[np->comp_sz-1].comp_type == EEPCT_CALL) {
         goto not;
@@ -743,7 +734,7 @@ static Node* ParseCallOrAssign( Parser* p ) {
     Node*     rhs;
     Token      op = LEX(p)->tk;
 
-    if(!IsNodeLHS(n)) {
+    if(!IsNodeLHS(lhs)) {
       ParserError(p,"not valid left hand side, cannot be used as assignment");
       return NULL;
     }
@@ -765,9 +756,9 @@ static Node* ParseCallOrAssign( Parser* p ) {
     return (Node*)n;
   } else {
     // now this statement *must* be a call otherwise it is not allowed
-    if(lhs->base.type == ENT_PREFIX) {
-      NodePrefix* p = (NodePrefix*)(lhs);
-      if(p->comp[p->comp_sz-1].comp_type == EEPCT_CALL) {
+    if(lhs->type == ENT_PREFIX) {
+      NodePrefix* npref = (NodePrefix*)(lhs);
+      if(npref->comp[npref->comp_sz-1].comp_type == EEPCT_CALL) {
         EXPECT(p,TK_SEMICOLON);
         return lhs;
       }
@@ -785,22 +776,21 @@ static int ParseBranch( Parser* p , NodeIf* n , int is_else ) {
   if(!is_else) {
     // try to parse the condition
     if(LEX(p)->tk == TK_LPAR) {
-      if(!(cond = ParseExpr(p))) return NULL;
-      EXEPECTR(p,TK_RPAR,return -1);
+      if(!(cond = ParseExpr(p))) return -1;
+      EXPECTR(p,TK_RPAR,return -1);
     }
   }
 
   if(n->sz == n->cap) {
     size_t ncap = n->cap ? 2 * n->cap : 2;
-    n->chains = MPoolRealloc(p->pool,n->chains,sizeof(NodeIfBranch)*n->size,sizeof(NodeIfBranch)*ncap);
+    n->chains = MPoolRealloc(p->pool,n->chains,sizeof(NodeIfBranch)*n->sz,sizeof(NodeIfBranch)*ncap);
     n->cap    = ncap;
   }
 
   if_br = n->chains + n->sz++;
-
   if(!(if_br->chunk = ParseChunkOrSStmt(p,0)))
-    return NULL;
-  if_br = cond;
+    return -1;
+  if_br->cond = cond;
 
   return 0;
 }
@@ -842,6 +832,7 @@ static Node* ParseShortStmt( Parser* p ) {
     case TK_DBL:
     case TK_VOID:
     case TK_CHAR:
+    case TK_BOOL:
     case TK_STR:
     case TK_STRUCT:
       return ParseLocal(p);
@@ -852,7 +843,6 @@ static Node* ParseShortStmt( Parser* p ) {
 
 static Node* ParseFor( Parser* p ) {
   size_t  dbg_start = L(p)->pos;
-  NodeFor* n = GRAB(NodeFor);
   LexScp   lscp;
   NodeFor* ret;
 
@@ -902,9 +892,9 @@ static Node* ParseFor( Parser* p ) {
   ret->step = step;
   ret->chunk= ck;
 
-  LexScpLeave(p);
+  ScpLeave(p);
 
-  return ret;
+  return (Node*)ret;
 }
 
 static Node* ParseContinue( Parser* p ) {
@@ -940,6 +930,7 @@ static Node* ParseBreak( Parser* p ) {
 }
 
 static Node* ParseReturn( Parser* p ) {
+  size_t dbg_start = L(p)->pos;
   NodeReturn* r;
   Node*       rv;
   FuncScp*    fscp = FScp(p);
@@ -955,7 +946,7 @@ static Node* ParseReturn( Parser* p ) {
   } else {
     if(!(rv = ParseExpr(p)))
       return NULL;
-    if(fscp->type-ret->tag == EPT_VOID) {
+    if(fscp->type->ret->tag == EPT_VOID) {
       ParserError(p,"cannot return a value in function defined to have a none-void return type");
       return NULL;
     }
@@ -970,6 +961,215 @@ static Node* ParseReturn( Parser* p ) {
   r->expr           = rv;
 
   return (Node*)r;
+}
+
+static NodeChunk* ParseChunk( Parser* p , int is_loop ) {
+  NodeChunk* ret;
+  LexScp scp;
+
+  LexScpEnter(p,&scp,is_loop);
+
+  assert(LEX(p)->tk == TK_LBRA);
+  NEXT(p);
+
+  ret = GRAB(NodeChunk);
+  ret->stmt = NULL;
+  ret->sz   = 0;
+  ret->cap  = 0;
+
+  if(LEX(p)->tk != TK_RBRA) {
+    for( ;; ) {
+      Node* stmt = ParseStmt(p);
+      if(!stmt) return NULL;
+      if(ret->sz == ret->cap) {
+        size_t ncap = ret->cap ? ret->cap * 2 : 8;
+        ret->stmt = MPoolRealloc(p->pool,ret->stmt,sizeof(Node*)*ret->sz,ncap*sizeof(Node*));
+        ret->cap  = ncap;
+      }
+      ret->stmt[ret->sz++] = stmt;
+
+      if(LEX(p)->tk == TK_RBRA) {
+        break;
+      }
+    }
+  }
+
+  NEXT(p); // skip the }
+
+  ScpLeave(p);
+  return ret;
+}
+
+static NodeChunk* ParseChunkOrSStmt( Parser* p , int is_loop ) {
+  if(LEX(p)->tk == TK_RBRA) {
+    return ParseChunk(p,is_loop);
+  } else {
+    LexScp scp;
+    NodeChunk* ret = GRAB(NodeChunk);
+    Node* stmt;
+
+    LexScpEnter(p,&scp,is_loop);
+
+    if(!(stmt = ParseStmt(p)))
+        return NULL;
+
+    ret->stmt = MPoolGrab(p->pool,sizeof(Node*));
+    ret->stmt[0] = stmt;
+    ret->cap     = 1;
+    ret->sz      = 1;
+
+    ScpLeave(p);
+    return ret;
+  }
+}
+
+static Node* ParseStmt( Parser* p ) {
+  switch(LEX(p)->tk) {
+    case TK_IF:
+      return ParseIf(p);
+    case TK_FOR:
+      return ParseFor(p);
+    case TK_CONTINUE:
+      return ParseContinue(p);
+    case TK_BREAK:
+      return ParseBreak(p);
+    case TK_RETURN:
+      return ParseReturn(p);
+    case TK_INT:
+    case TK_DBL:
+    case TK_VOID:
+    case TK_CHAR:
+    case TK_STR:
+    case TK_BOOL:
+    case TK_STRUCT:
+      return ParseLocal(p);
+    default:
+      return ParseCallOrAssign(p);
+  }
+}
+
+static int ParseFuncArgList( Parser* p , FuncType* ft , FuncScp* fscp ) {
+  NEXT(p); // skip (
+
+  if(LEX(p)->tk == TK_RPAR) {
+    NEXT(p);
+  } else {
+    for( ;; ) {
+      LitIdx      aname;
+      const Type* atype;
+      if(ft->arg_size == CONFIG_MAX_CALL_ARGS) {
+        ParserError(p,"too many function arguments, only allowed %d",CONFIG_MAX_CALL_ARGS);
+        return -1;
+      }
+      if(ParseVDec(p,&atype,&aname)) return -1;
+      TypeSysFuncAddArg(p->tsys,ft,atype,aname);
+      SymTableSetArg(&(fscp->base.stb),aname,atype);
+
+      switch(LEX(p)->tk) {
+        case TK_COMMA:
+          NEXT(p);
+          break;
+        case TK_RPAR:
+          NEXT(p);
+          goto done;
+        default:
+          ParserError(p,"expect \",\" or \")\" in argument list");
+          return -1;
+      }
+    }
+  }
+done:
+  return 0;
+}
+
+static Node* ParseFunction( Parser* p , LitIdx fname , const Type* rtype ) {
+  assert(LEX(p)->tk == TK_LPAR);
+  {
+    size_t dbg_start = L(p)->pos;
+    NodeFunction* fnode;
+    FuncScp fscp;
+    FuncType* ft = TypeSysSetFunc(p->tsys,fname);
+
+    FuncScpEnter(p,&fscp,ft);
+
+    if(ParseFunArgList(p,ft,&fscp)) return NULL;
+    if(LEX(p)->tk != TK_LBRA) {
+      ParserError(p,"expect a \"{\" to start a function body");
+      return NULL;
+    }
+
+    fnode                 = GRAB(NodeFunction);
+    fnode->base.type      = ENT_FUNCT;
+    fnode->base.dbg_start = dbg_start;
+    fnode->type           = ft;
+
+    if(!(fnode->chunk = ParseChunk(p,0)))
+      return NULL;
+
+    fnode->base.dbg_end   = L(p)->pos;
+
+    ScpLeave(p);
+    return (Node*)fnode;
+  }
+}
+
+static Node* ParseGlbVarOrFunction( Parser* p ) {
+}
+
+static Node* ParseStruct( Parser* p ) {
+}
+
+static Node* ParseFile( Parser* p ) {
+  GlbScp scp;
+  Node* stmt;
+  NodeFile* all       = GRAB(NodeFile);
+  all->base.type      = ENT_FILE;
+  all->base.dbg_start = L(p)->pos;
+  all->chunk          = GRAB(NodeChunk);
+  all->chunk->stmt    = NULL;
+  all->chunk->sz      = 0;
+  all->chunk->cap     = 0;
+
+  scp.base.type = SCPT_GLOBAL;
+  scp.base.prev = NULL;
+  p->scp        = (Scp*)scp;
+
+  SymTableInit(&(scp.base.stb),p->pool);
+
+  for( ;; ) {
+    switch(LEX(p)->tk) {
+      case TK_VOID:
+      case TK_INT:
+      case TK_DBL:
+      case TK_CHAR:
+      case TK_BOOL:
+      case TK_STR:
+        if(!(stmt = ParseGlbVarOrFunction(p)))
+          return NULL;
+        break;
+      case TK_STRUCT:
+        if(!(stmt = ParseStruct(p)))
+          return NULL;
+        break;
+      default:
+        ParserError(p,"unknown global scope statement");
+        return NULL;
+    }
+
+    if(all->chunk->cap == all->chunk->sz) {
+      size_t ncap = all->chunk->cap ? 2 * all->chunk->cap : 4;
+      all->chunk->stmt = MPoolRealloc(p->pool,
+                                      all->chunk->stmt,
+                                      sizeof(Node*)*all->chunk->sz,
+                                      sizeof(Node*)*ncap);
+      all->chunk->cap  = ncap;
+    }
+    all->chunk->stmt[all->chunk->sz++] = stmt;
+  }
+
+  SymTableDelete(&(scp.base.stb));
+
+  assert(p->scp == NULL);
 }
 
 /** ----------------------------------------------------------------
