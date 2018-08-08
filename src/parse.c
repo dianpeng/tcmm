@@ -7,7 +7,15 @@
 #include <stdarg.h>
 #include <assert.h>
 
-#define EXPR_MEMPOOL_SIZE 512
+typedef struct _Parser {
+  LitPool* lpool;
+  Lexer    lexer;
+  MPool*    pool;
+  const char* err;
+  int      lp_cnt;
+
+	NodeFunc* nf; // currently parsing NodeFunc node
+} Parser;
 
 #define GRAB(XX) (MPoolGrab((p->pool),sizeof(XX)))
 #define L(XX)    (&((XX)->lexer))
@@ -33,148 +41,18 @@ static void ParserError( Parser* p , const char* fmt , ... ) {
   p->err = ReportError("parser",L(p)->src,L(p)->pos,L(p)->nline,L(p)->nchar,buf);
 }
 
-PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* pool ) {
-  if(p->comp_sz == p->comp_cap) {
-    size_t ncap = p->comp_cap ? p->comp_cap * 2 : 4;
-    p->comp = MPoolRealloc(pool,p->comp,sizeof(NodePrefixComp)*p->comp_cap,ncap);
-    p->comp_cap = ncap;
-  }
-
-  return p->comp + p->comp_sz++;
-}
-
-PAPI void ParserInit( Parser* p , LitPool* lpool , TypeSys* tsys , MPool* mpool ,
-                                                                   const char* src ) {
+static void ParserInit( Parser* p , LitPool* lpool , MPool* mpool , const char* src ) {
   p->lpool = lpool;
-  p->tsys  = tsys;
   p->pool  = mpool;
+	p->lp_cnt= 0;
+  p->err   = NULL;
+
   LexerInit(&(p->lexer),lpool,src);
   LexerNext(&(p->lexer)); // fire the lexer
 }
 
-PAPI void ParserDelete( Parser* p ) {
+static void ParserDelete( Parser* p ) {
   LexerDelete(&(p->lexer));
-}
-
-/** ------------------------------------------------
- * Scope
- * ------------------------------------------------*/
-static LexScp* LexScpEnter( Parser* p , LexScp* lscp , int is_loop ) {
-  Scp* pscp = p->scp;
-
-  lscp->base.prev = pscp;
-  lscp->base.type = SCPT_LEXICAL;
-  SymTableInit(&(lscp->base.stb),p->pool);
-
-  if(pscp->type == SCPT_LEXICAL) {
-    LexScp* pp = (LexScp*)pscp;
-    // accumulated variable size
-    lscp->vsz = pp->vsz + pp->base.stb.sz;
-    lscp->in_loop = is_loop || pp->in_loop || pp->is_loop;
-    lscp->is_loop = is_loop;
-    lscp->fscp    = pp->fscp;
-  } else {
-    assert(pscp->type == SCPT_FUNC);
-    assert(is_loop == 0);
-    {
-      FuncScp* fscp = (FuncScp*)pscp;
-      lscp->vsz = 0;
-      lscp->in_loop = 0;
-      lscp->is_loop = 0;
-      lscp->fscp    = fscp;
-    }
-  }
-
-  // update the current scope context
-  p->scp = (Scp*)lscp;
-
-  return lscp;
-}
-
-static FuncScp* FuncScpEnter( Parser* p , FuncScp* scp , const FuncType* ft ) {
-  assert(p->scp->type == SCPT_GLOBAL);
-  {
-    GlbScp* pscp = (GlbScp*)(p->scp);
-    scp->base.prev = (Scp*)pscp;
-    scp->base.type = SCPT_FUNC;
-    SymTableInit(&(scp->base.stb),p->pool);
-    scp->type = ft;
-    scp->max_stksz = 0;
-
-    p->scp = (Scp*)scp;
-    return scp;
-  }
-}
-
-static Scp* ScpLeave( Parser* p ) {
-  Scp* scp = p->scp;
-
-  if(scp->type == SCPT_LEXICAL) {
-    LexScp* lscp = (LexScp*)(scp);
-
-    size_t max_vsz = lscp->vsz + lscp->base.stb.sz;
-    if(max_vsz > lscp->fscp->max_stksz)
-      lscp->fscp->max_stksz = max_vsz;
-  }
-  SymTableDelete(&(scp->stb));
-  p->scp = scp->prev;
-  return p->scp;
-}
-
-static inline FuncScp* CurFScp( Parser* p ) {
-  assert( p->scp && p->scp->type == SCPT_FUNC );
-  return (FuncScp*)(p->scp);
-}
-
-static inline LexScp* CurLScp ( Parser* p ) {
-  assert( p->scp && p->scp->type == SCPT_LEXICAL );
-  return (LexScp*)(p->scp);
-}
-
-static inline GlbScp* CurGScp ( Parser* p ) {
-  assert( p->scp && p->scp->type == SCPT_GLOBAL );
-  return (GlbScp*)(p->scp);
-}
-
-static inline FuncScp* FScp( Parser* p ) {
-  if(p->scp->type == SCPT_FUNC)
-    return (FuncScp*)p->scp;
-  if(p->scp->type == SCPT_LEXICAL)
-    return ((LexScp*)(p->scp))->fscp;
-
-  return NULL;
-}
-
-// resolve a symbol name based on a literal index
-static inline const Sym* FindSym( Parser* p , LitIdx name ) {
-  Scp* cscp = p->scp;
-  while(cscp) {
-    const Sym* ret = SymTableGet(&(cscp->stb),name);
-    if(ret) return ret;
-    cscp = cscp->prev;
-  }
-  return NULL;
-}
-
-static inline LVar* DefineLVar( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->type == SCPT_LEXICAL);
-  if(SymTableGetLVar(&(p->scp->stb),name))
-    return NULL;
-  return SymTableSetLVar(&(p->scp->stb),name,t);
-}
-
-static inline GVar* DefineGVar( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->type == SCPT_GLOBAL);
-  if(SymTableGetGVar(&(p->scp->stb),name))
-    return NULL;
-  return SymTableSetGVar(&(p->scp->stb),name,t);
-}
-
-static inline Arg* DefineArg( Parser* p , LitIdx name , const Type* t ) {
-  assert(p->scp->type == SCPT_FUNC);
-  if(SymTableGetArg(&(p->scp->stb),name))
-    return NULL;
-  return SymTableSetArg(&(p->scp->stb),name,t);
 }
 
 /** ------------------------------------------------
@@ -187,6 +65,17 @@ static Node* ParseUnary  ( Parser* );
 static Node* ParsePrefix ( Parser* );
 static Node* ParsePrimary( Parser* );
 static Node* ParseStruLit( Parser* );
+
+static NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* pool ) {
+  if(p->comp_sz == p->comp_cap) {
+    size_t ncap = p->comp_cap ? p->comp_cap * 2 : 4;
+    p->comp = MPoolRealloc(pool,p->comp,sizeof(NodePrefixComp)*p->comp_cap,ncap);
+    p->comp_cap = ncap;
+  }
+
+  return p->comp + p->comp_sz++;
+}
+
 
 static inline void NodeDbg0( Parser* p , Node* n ) {
   n->dbg_start = L(p)->pos - LEX(p)->tk_sz;
@@ -203,7 +92,6 @@ static inline int _IsUnaryOp( Token tk ) {
 
 static Node* ParseStruLit( Parser* p ) {
   NodeStruLit* slit;
-  const StructType* t;
   size_t pos_start = L(p)->pos;
 
   assert( LEX(p)->tk == TK_STRUCT );
@@ -214,10 +102,6 @@ static Node* ParseStruLit( Parser* p ) {
     ParserError(p,"expect a ID to indicate type name");
     return NULL;
   }
-  if(!(t = TypeSysGetStruct(p->tsys,LEX(p)->lit))) {
-    ParserError(p,"struct type %s is not defined",LitPoolId(p->lpool,LEX(p)->lit));
-    return NULL;
-  }
   NEXT(p); // skip the type name
   EXPECT(p,TK_LBRA); // expect a {
 
@@ -226,7 +110,7 @@ static Node* ParseStruLit( Parser* p ) {
   slit->base.type      = ENT_STRULIT;
   slit->base.dbg_start = pos_start;
 
-  slit->ctype  = t;
+  slit->ctype  = NULL;
   slit->assign = NULL;
 
   // parsing struct literal field
@@ -235,8 +119,6 @@ static Node* ParseStruLit( Parser* p ) {
   } else {
     do {
       NodeStruLitAssign* field = NULL;
-      const FieldType*   ft    = NULL;
-      const StructType*  st    = (const StructType*)(t);
 
       EXPECT(p,TK_DOT); // expect a dot
       if(LEX(p)->tk != TK_ID) {
@@ -250,18 +132,10 @@ static Node* ParseStruLit( Parser* p ) {
       //        been chained in reverse order
       field->next = slit->assign;
       slit->assign= field;
-
-      if(!(ft = TypeSysGetStructField(p->tsys,st,LEX(p)->lit))) {
-        ParserError(p,"field %s is not found in struct %s",LitPoolId(p->lpool,LEX(p)->lit),
-                                                           LitPoolId(p->lpool,t->name));
-        return NULL;
-      }
-
-      field->ftype = ft;
-
+      field->ctype= NULL;
+      field->name = LEX(p)->lit;
       NEXT(p);             // skip ID
       EXPECT(p,TK_ASSIGN); // skip =
-
       if(!(field->value = ParseExpr(p))) return NULL;
       switch(LEX(p)->tk) {
         case TK_COMMA:
@@ -274,9 +148,7 @@ static Node* ParseStruLit( Parser* p ) {
           ParserError(p,"expect a \",\" or \"}\" in struct literal");
           return NULL;
       }
-
     } while(1);
-
   }
 
 done:
@@ -296,6 +168,7 @@ static Node* ParsePrimary( Parser* p ) {
         NodeLit* n = GRAB(NodeLit);
         n->base.type = ENT_LIT;
         NodeDbg0(p,(Node*)n);
+        n->ctype = NULL;
         if(LEX(p)->tk == TK_LIT_TRUE || LEX(p)->tk == TK_LIT_FALSE) {
           n->lit = LEX(p)->tk == TK_LIT_TRUE ? LitPoolGetTrue(p->lpool) : LitPoolGetFalse(p->lpool);
         } else {
@@ -312,7 +185,7 @@ static Node* ParsePrimary( Parser* p ) {
         NEXT(p);
         if(!(n = ParseExpr(p)))
           return NULL;
-        EXPECT(p,TK_LPAR);
+        EXPECT(p,TK_RPAR);
 
         // adjust debug info to include the "(" and ")"
         n->dbg_start = dbg_start;
@@ -324,6 +197,7 @@ static Node* ParsePrimary( Parser* p ) {
       {
         NodeId* n = GRAB(NodeId);
         n->base.type = ENT_ID;
+
         NodeDbg0(p,(Node*)n);
         n->name = LEX(p)->lit;
         NEXT(p);
@@ -393,6 +267,7 @@ static Node* ParsePrefix( Parser* p ) {
     NodePrefix* prefix = GRAB(NodePrefix);
     prefix->base.type      = ENT_PREFIX;
     prefix->base.dbg_start = dbg_start;
+    prefix->ctype          = NULL;
 
     /**
      * now at here, we meet a ID which is a possible start of a prefix
@@ -452,6 +327,7 @@ static Node* ParseUnary( Parser* p ) {
     una->base.type      = ENT_UNARY;
     una->opr = opr;
     una->op  = op;
+    una->ctype = NULL;
     return (Node*)una;
   }
   return ParsePrefix(p);
@@ -518,6 +394,7 @@ static Node* _ParseBin( Parser* p , int prec ) {
         bin->lhs            = lhs;
         bin->rhs            = rhs;
         bin->op             = op;
+        bin->ctype          = NULL;
         lhs                 = (Node*)bin;
       } else {
         assert(prec < cp);
@@ -560,6 +437,7 @@ static Node* ParseTernary( Parser* p ) {
     ten->first = f;
     ten->second= cond;
     ten->third = trd;
+    ten->ctype = NULL;
 
     return (Node*)ten;
   }
@@ -573,13 +451,13 @@ static Node* ParseExpr( Parser* p ) { return ParseTernary(p); }
  * ----------------------------------------------------------------*/
 // Parse a declaration. A declaration is something as following :
 // type id array-modifier
-static int ParseVDec( Parser* , const Type** , LitIdx* ref );
+static int ParseVDec( Parser* , TypeInfo* , LitIdx* ref );
 
-static NodeChunk* ParseChunk       ( Parser* , int );
-static NodeChunk* ParseChunkOrSStmt( Parser* , int );
+static CodeChunk* ParseChunk       ( Parser* );
+static CodeChunk* ParseChunkOrSStmt( Parser* );
 
 static Node* ParseLocal       ( Parser* );
-static Node* ParseCallOrAssign( Parser* );
+static Node* ParseCallOrAssign( Parser* , Token );
 static Node* ParseIf          ( Parser* );
 static Node* ParseFor         ( Parser* );
 static Node* ParseContinue    ( Parser* );
@@ -587,41 +465,48 @@ static Node* ParseBreak       ( Parser* );
 static Node* ParseReturn      ( Parser* );
 static Node* ParseStmt        ( Parser* );
 
-static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
+static void CodeChunkAddStmt( Parser* p , CodeChunk* ck , Node* stmt ) {
+  if(ck->cap == ck->sz) {
+    size_t ncap = ck->cap ? ck->cap * 2 : 16;
+    ck->stmt    = MPoolRealloc(p->pool,ck->stmt,sizeof(Node*)*ck->sz,sizeof(Node*)*ncap);
+    ck->cap     = ncap;
+  }
+  ck->stmt[ck->sz++] = stmt;
+}
+
+static int ParseVDec( Parser* p , TypeInfo* tinfo , LitIdx* ref ) {
   switch(LEX(p)->tk) {
     case TK_INT:
-      *out_tp = (const Type*)TypeSysGetInt(p->tsys);
+      tinfo->type = EPT_INT;
       break;
     case TK_DBL:
-      *out_tp = (const Type*)TypeSysGetDbl(p->tsys);
+      tinfo->type = EPT_DBL;
       break;
     case TK_BOOL:
-      *out_tp = (const Type*)TypeSysGetBool(p->tsys);
+      tinfo->type = EPT_BOOL;
       break;
     case TK_CHAR:
-      *out_tp = (const Type*)TypeSysGetChar(p->tsys);
+      tinfo->type = EPT_CHAR;
       break;
     case TK_STR:
-      *out_tp = (const Type*)TypeSysGetStr (p->tsys);
+      tinfo->type = ET_STR;
       break;
     case TK_STRUCT:
       {
-        LitIdx tid;
         NEXT(p);
         if(LEX(p)->tk != TK_ID) {
           ParserError(p,"expect a ID name after the struct");
           return -1;
         }
-        tid = LEX(p)->lit;
-        *out_tp = (const Type*)TypeSysGetStruct(p->tsys,tid);
-        if(!*out_tp) {
-          ParserError(p,"struct type %s is not found",LitPoolId(p->lpool,tid));
-          return -1;
-        }
+        tinfo->type = ET_STRUCT;
+        tinfo->extra.name = LEX(p)->lit;
       }
       break;
-    default:
+    case TK_VOID:
       ParserError(p,"void type cannot be used for declare variable");
+      return -1;
+    default:
+      ParserError(p,"unknown token here, expect a type specifier");
       return -1;
   }
 
@@ -645,21 +530,15 @@ static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
       ParserError(p,"expect a literal integer serve as array length");
       return -1;
     }
-
     len = (size_t)LitPoolInt(p->lpool,LEX(p)->lit);
     if(len == 0) {
       ParserError(p,"array length cannot be 0");
       return -1;
     }
 
-    // for array if it is not defined, then just try to define it
-    {
-      const ArrType* at = TypeSysGetArr(p->tsys,*out_tp,len);
-      if(!at) {
-        at = TypeSysSetArr(p->tsys,*out_tp,len);
-        *out_tp = (const Type*)(at);
-      }
-    }
+    tinfo->extra.arr.t   = tinfo->type;
+    tinfo->type          = ET_ARR;
+    tinfo->extra.arr.len = len;
 
     NEXT(p);
     EXPECTR(p,TK_RSQR,return -1);
@@ -674,19 +553,18 @@ static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
 // def  := type id array-modifier ';'
 // dec  := type id array-modifier '=' expr ';'
 static Node* ParseLocal( Parser* p ) {
-  const Type* tp;
   LitIdx      vid;
   size_t      dbg_start = L(p)->pos;
   NodeLocal*  l;
 
-  if(ParseVDec(p,&tp,&vid)) return NULL;
-
   l = GRAB(NodeLocal);
+
+  if(ParseVDec(p,&(l->tinfo),&vid)) return NULL;
+
 
   l->base.type      = ENT_LOCAL;
   l->base.dbg_start = dbg_start;
   l->base.dbg_end   = L(p)->pos;
-  l->ctype          = tp;
   l->name           = vid;
   l->rhs            = NULL;
 
@@ -725,10 +603,12 @@ static int IsAssignOp( Token tk ) {
          tk == TK_SDIV;
 }
 
-static Node* ParseCallOrAssign( Parser* p ) {
+static Node* ParseCallOrAssign( Parser* p , Token delim ) {
   size_t dbg_start = L(p)->pos;
 
   Node* lhs = ParseExpr(p); // try to parse if as a lhs expression
+  if(!lhs) return NULL;
+
   if(IsAssignOp(LEX(p)->tk)) {
     NodeAssign* n;
     Node*     rhs;
@@ -742,7 +622,7 @@ static Node* ParseCallOrAssign( Parser* p ) {
     NEXT(p); // skip assignment token
     if(!(rhs = ParseExpr(p)))
       return NULL;
-    EXPECT(p,TK_SEMICOLON);
+    EXPECT(p,delim);
 
     n = GRAB(NodeAssign);
 
@@ -759,14 +639,14 @@ static Node* ParseCallOrAssign( Parser* p ) {
     if(lhs->type == ENT_PREFIX) {
       NodePrefix* npref = (NodePrefix*)(lhs);
       if(npref->comp[npref->comp_sz-1].comp_type == EEPCT_CALL) {
-        EXPECT(p,TK_SEMICOLON);
+        EXPECT(p,delim);
         return lhs;
       }
     }
-
-    ParserError(p,"meaningless statement, expect a call");
-    return NULL;
   }
+
+  ParserError(p,"meaningless statement, expect a call or a assignment");
+  return NULL;
 }
 
 static int ParseBranch( Parser* p , NodeIf* n , int is_else ) {
@@ -776,6 +656,7 @@ static int ParseBranch( Parser* p , NodeIf* n , int is_else ) {
   if(!is_else) {
     // try to parse the condition
     if(LEX(p)->tk == TK_LPAR) {
+      NEXT(p);
       if(!(cond = ParseExpr(p))) return -1;
       EXPECTR(p,TK_RPAR,return -1);
     }
@@ -788,7 +669,7 @@ static int ParseBranch( Parser* p , NodeIf* n , int is_else ) {
   }
 
   if_br = n->chains + n->sz++;
-  if(!(if_br->chunk = ParseChunkOrSStmt(p,0)))
+  if(!(if_br->chunk = ParseChunkOrSStmt(p)))
     return -1;
   if_br->cond = cond;
 
@@ -802,21 +683,25 @@ static Node* ParseIf( Parser* p ) {
   n->base.type = ENT_IF;
   n->base.dbg_start = dbg_start;
 
+  n->chains = NULL;
+  n->sz     = 0;
+  n->cap    = 0;
+
   // parse the leading if
   NEXT(p); // skip if
-  if(!ParseBranch(p,n,0))
+  if(ParseBranch(p,n,0))
     return NULL;
 
   // elif cluster
   while(LEX(p)->tk == TK_ELIF) {
     NEXT(p);
-    if(!ParseBranch(p,n,0)) return NULL;
+    if(ParseBranch(p,n,0)) return NULL;
   }
 
   // dangling else
   if(LEX(p)->tk == TK_ELSE) {
     NEXT(p);
-    if(!ParseBranch(p,n,1)) return NULL;
+    if(ParseBranch(p,n,1)) return NULL;
   }
 
   n->base.dbg_end = L(p)->pos;
@@ -837,24 +722,23 @@ static Node* ParseShortStmt( Parser* p ) {
     case TK_STRUCT:
       return ParseLocal(p);
     default:
-      return ParseCallOrAssign(p);
+      return ParseCallOrAssign(p,TK_SEMICOLON);
   }
 }
 
 static Node* ParseFor( Parser* p ) {
   size_t  dbg_start = L(p)->pos;
-  LexScp   lscp;
   NodeFor* ret;
 
   Node* init = NULL;
   Node* cond = NULL;
   Node* step = NULL;
-  NodeChunk* ck = NULL;
+  CodeChunk* ck = NULL;
 
   NEXT(p); EXPECT(p,TK_LPAR);
 
   // setup a new lexical scope
-  LexScpEnter(p,&lscp,1);
+	++p->lp_cnt;
 
   // initialize stmt
   if(LEX(p)->tk == TK_SEMICOLON)
@@ -875,11 +759,10 @@ static Node* ParseFor( Parser* p ) {
   if(LEX(p)->tk == TK_RPAR)
     NEXT(p);
   else {
-    if(!(step = ParseExpr(p))) return NULL;
-    EXPECT(p,TK_RPAR);
+    if(!(step = ParseCallOrAssign(p,TK_RPAR))) return NULL;
   }
 
-  if(!(ck = ParseChunkOrSStmt(p,1)))
+  if(!(ck = ParseChunkOrSStmt(p)))
     return NULL;
 
   ret = GRAB(NodeFor);
@@ -892,14 +775,14 @@ static Node* ParseFor( Parser* p ) {
   ret->step = step;
   ret->chunk= ck;
 
-  ScpLeave(p);
+	--p->lp_cnt;
 
   return (Node*)ret;
 }
 
 static Node* ParseContinue( Parser* p ) {
   NodeContinue* c;
-  if(!CurLScp(p)->in_loop) {
+  if(p->lp_cnt == 0) {
     ParserError(p,"cannot write continue statement in none-loop scope");
     return NULL;
   }
@@ -914,7 +797,7 @@ static Node* ParseContinue( Parser* p ) {
 
 static Node* ParseBreak( Parser* p ) {
   NodeBreak* b;
-  if(!CurLScp(p)->in_loop) {
+  if(p->lp_cnt == 0) {
     ParserError(p,"cannot write break statement in none-loop scope");
     return NULL;
   }
@@ -933,23 +816,12 @@ static Node* ParseReturn( Parser* p ) {
   size_t dbg_start = L(p)->pos;
   NodeReturn* r;
   Node*       rv;
-  FuncScp*    fscp = FScp(p);
 
-  assert(fscp);
   NEXT(p); // skip return
 
-  if(LEX(p)->tk == TK_SEMICOLON) {
-    if(fscp->type->ret->tag != EPT_VOID) {
-      ParserError(p,"cannot return nothing in a function with return type not defined as void");
-      return NULL;
-    }
-  } else {
+  if(LEX(p)->tk != TK_SEMICOLON) {
     if(!(rv = ParseExpr(p)))
       return NULL;
-    if(fscp->type->ret->tag == EPT_VOID) {
-      ParserError(p,"cannot return a value in function defined to have a none-void return type");
-      return NULL;
-    }
   }
 
   EXPECT(p,TK_SEMICOLON);
@@ -963,16 +835,13 @@ static Node* ParseReturn( Parser* p ) {
   return (Node*)r;
 }
 
-static NodeChunk* ParseChunk( Parser* p , int is_loop ) {
-  NodeChunk* ret;
-  LexScp scp;
-
-  LexScpEnter(p,&scp,is_loop);
+static CodeChunk* ParseChunk( Parser* p ) {
+  CodeChunk* ret;
 
   assert(LEX(p)->tk == TK_LBRA);
   NEXT(p);
 
-  ret = GRAB(NodeChunk);
+  ret = GRAB(CodeChunk);
   ret->stmt = NULL;
   ret->sz   = 0;
   ret->cap  = 0;
@@ -981,13 +850,7 @@ static NodeChunk* ParseChunk( Parser* p , int is_loop ) {
     for( ;; ) {
       Node* stmt = ParseStmt(p);
       if(!stmt) return NULL;
-      if(ret->sz == ret->cap) {
-        size_t ncap = ret->cap ? ret->cap * 2 : 8;
-        ret->stmt = MPoolRealloc(p->pool,ret->stmt,sizeof(Node*)*ret->sz,ncap*sizeof(Node*));
-        ret->cap  = ncap;
-      }
-      ret->stmt[ret->sz++] = stmt;
-
+      CodeChunkAddStmt(p,ret,stmt);
       if(LEX(p)->tk == TK_RBRA) {
         break;
       }
@@ -996,19 +859,15 @@ static NodeChunk* ParseChunk( Parser* p , int is_loop ) {
 
   NEXT(p); // skip the }
 
-  ScpLeave(p);
   return ret;
 }
 
-static NodeChunk* ParseChunkOrSStmt( Parser* p , int is_loop ) {
-  if(LEX(p)->tk == TK_RBRA) {
-    return ParseChunk(p,is_loop);
+static CodeChunk* ParseChunkOrSStmt( Parser* p ) {
+  if(LEX(p)->tk == TK_LBRA) {
+    return ParseChunk(p);
   } else {
-    LexScp scp;
-    NodeChunk* ret = GRAB(NodeChunk);
+    CodeChunk* ret = GRAB(CodeChunk);
     Node* stmt;
-
-    LexScpEnter(p,&scp,is_loop);
 
     if(!(stmt = ParseStmt(p)))
         return NULL;
@@ -1018,7 +877,6 @@ static NodeChunk* ParseChunkOrSStmt( Parser* p , int is_loop ) {
     ret->cap     = 1;
     ret->sz      = 1;
 
-    ScpLeave(p);
     return ret;
   }
 }
@@ -1044,26 +902,33 @@ static Node* ParseStmt( Parser* p ) {
     case TK_STRUCT:
       return ParseLocal(p);
     default:
-      return ParseCallOrAssign(p);
+      return ParseCallOrAssign(p,TK_SEMICOLON);
   }
 }
 
-static int ParseFuncArgList( Parser* p , FuncType* ft , FuncScp* fscp ) {
+static int ParseFuncArgList( Parser* p , NodeFunc* nf ) {
   NEXT(p); // skip (
 
   if(LEX(p)->tk == TK_RPAR) {
     NEXT(p);
   } else {
     for( ;; ) {
-      LitIdx      aname;
-      const Type* atype;
-      if(ft->arg_size == CONFIG_MAX_CALL_ARGS) {
+      NodeFuncArgDef* def;
+      if(nf->arg_sz == nf->arg_cap) {
+        size_t ncap = nf->arg_cap ? nf->arg_cap * 2 : 4;
+        nf->arg     = MPoolRealloc(p->pool,nf->arg,sizeof(NodeFuncArgDef)*nf->arg_sz,
+                                                   sizeof(NodeFuncArgDef)*ncap);
+        nf->arg_cap = ncap;
+      }
+
+      def = nf->arg + nf->arg_sz++;
+
+      if(nf->arg_sz == CONFIG_MAX_CALL_ARGS) {
         ParserError(p,"too many function arguments, only allowed %d",CONFIG_MAX_CALL_ARGS);
         return -1;
       }
-      if(ParseVDec(p,&atype,&aname)) return -1;
-      TypeSysFuncAddArg(p->tsys,ft,atype,aname);
-      SymTableSetArg(&(fscp->base.stb),aname,atype);
+
+      if(ParseVDec(p,&(def->tinfo),&(def->name))) return -1;
 
       switch(LEX(p)->tk) {
         case TK_COMMA:
@@ -1082,59 +947,139 @@ done:
   return 0;
 }
 
-static Node* ParseFunction( Parser* p , LitIdx fname , const Type* rtype ) {
+static Node* ParseFunc( Parser* p , size_t dbg_start , LitIdx fname , const TypeInfo* tinfo ) {
   assert(LEX(p)->tk == TK_LPAR);
   {
-    size_t dbg_start = L(p)->pos;
-    NodeFunction* fnode;
-    FuncScp fscp;
-    FuncType* ft = TypeSysSetFunc(p->tsys,fname);
+    NodeFunc* fnode = GRAB(NodeFunc);
 
-    FuncScpEnter(p,&fscp,ft);
+    fnode                 = GRAB(NodeFunc);
+    fnode->base.type      = ENT_FUNC;
+    fnode->base.dbg_start = dbg_start;
+    fnode->ctype          = NULL;
 
-    if(ParseFunArgList(p,ft,&fscp)) return NULL;
+    fnode->arg            = NULL;
+    fnode->arg_sz         = 0;
+    fnode->arg_cap        = 0;
+    fnode->rtype          = *tinfo;
+
+    if(ParseFuncArgList(p,fnode)) return NULL;
+
     if(LEX(p)->tk != TK_LBRA) {
       ParserError(p,"expect a \"{\" to start a function body");
       return NULL;
     }
 
-    fnode                 = GRAB(NodeFunction);
-    fnode->base.type      = ENT_FUNCT;
-    fnode->base.dbg_start = dbg_start;
-    fnode->type           = ft;
-
-    if(!(fnode->chunk = ParseChunk(p,0)))
+    if(!(fnode->chunk = ParseChunk(p)))
       return NULL;
 
     fnode->base.dbg_end   = L(p)->pos;
-
-    ScpLeave(p);
     return (Node*)fnode;
   }
 }
 
+static Node* ParseGlbVar( Parser* p , size_t dbg_start , LitIdx name , const TypeInfo* type ) {
+  NodeGlobal* ret;
+  Node*       val;
+  NEXT(p); // skip the =
+  if(!(val = ParseExpr(p))) return NULL;
+  EXPECT(p,TK_SEMICOLON);
+
+  ret = GRAB(NodeGlobal);
+  ret->base.type      = ENT_GLOBAL;
+  ret->base.dbg_start = dbg_start;
+  ret->base.dbg_end   = L(p)->pos;
+  ret->value          = val;
+  ret->tinfo          = *type;
+  ret->ctype          = NULL;
+
+  return (Node*)ret;
+}
+
 static Node* ParseGlbVarOrFunction( Parser* p ) {
+  size_t      dbg_start = L(p)->pos;
+  LitIdx      name;
+  TypeInfo    t;
+
+  if(ParseVDec(p,&t,&name)) return NULL;
+
+  if(LEX(p)->tk == TK_ASSIGN) {
+    return ParseGlbVar(p,dbg_start,name,&t);
+  } else if(LEX(p)->tk == TK_LPAR) {
+    // check whether it can be a function or not
+    if(t.type == ET_ARR) {
+      ParserError(p,"doesn't look like a function definition , neither looks like a global variable");
+      return NULL;
+    }
+    return ParseFunc(p,dbg_start,name,&t);
+  }
+
+  ParserError(p,"unknown global statement, you can define struct type, global variables or function "
+                "in global scope");
+  return NULL;
 }
 
 static Node* ParseStruct( Parser* p ) {
+  NodeStructDef* def = GRAB(NodeStructDef);
+
+  def->base.type      = ENT_STRUCT_DEF;
+  def->base.dbg_start = L(p)->pos;
+
+  def->field = NULL;
+  def->sz    = 0;
+  def->cap   = 0;
+
+  NEXT(p); // skip "struct"
+  if(LEX(p)->tk != TK_ID) {
+    ParserError(p,"expect a id after the struct");
+    return NULL;
+  }
+
+  def->name = LEX(p)->lit;
+  NEXT(p); // skip the id
+
+  if(LEX(p)->tk != TK_LBRA) {
+    ParserError(p,"expect a \"{\" to start the struct body");
+    return NULL;
+  }
+  NEXT(p);
+  while(LEX(p)->tk != TK_RBRA) {
+    NodeStructDefField* field;
+
+    if(def->sz == def->cap) {
+      size_t ncap = def->cap ? def->cap * 2 : 4;
+      def->field  = MPoolRealloc(p->pool,def->field,sizeof(NodeStructDefField)*def->sz,
+                                                    sizeof(NodeStructDefField)*ncap);
+    }
+
+    field = def->field + def->sz++;
+
+    if(ParseVDec(p,&(field->tinfo),&(field->name)))
+      return NULL;
+
+    if(LEX(p)->tk == TK_SEMICOLON) {
+      NEXT(p);
+    } else {
+      ParserError(p,"expect a \";\" or \"}\" in struct body");
+      return NULL;
+    }
+  }
+
+  NEXT(p); // skip the last }
+  EXPECT(p,TK_SEMICOLON);
+
+  def->base.dbg_end = L(p)->pos;
+  return (Node*)def;
 }
 
-static Node* ParseFile( Parser* p ) {
-  GlbScp scp;
+static NodeFile* ParseFile( Parser* p ) {
   Node* stmt;
   NodeFile* all       = GRAB(NodeFile);
   all->base.type      = ENT_FILE;
   all->base.dbg_start = L(p)->pos;
-  all->chunk          = GRAB(NodeChunk);
+  all->chunk          = GRAB(CodeChunk);
   all->chunk->stmt    = NULL;
   all->chunk->sz      = 0;
   all->chunk->cap     = 0;
-
-  scp.base.type = SCPT_GLOBAL;
-  scp.base.prev = NULL;
-  p->scp        = (Scp*)scp;
-
-  SymTableInit(&(scp.base.stb),p->pool);
 
   for( ;; ) {
     switch(LEX(p)->tk) {
@@ -1148,58 +1093,93 @@ static Node* ParseFile( Parser* p ) {
           return NULL;
         break;
       case TK_STRUCT:
-        if(!(stmt = ParseStruct(p)))
+        if(!(stmt=ParseStruct(p)))
           return NULL;
         break;
+      case TK_EOF:
+        goto done;
       default:
         ParserError(p,"unknown global scope statement");
         return NULL;
     }
-
-    if(all->chunk->cap == all->chunk->sz) {
-      size_t ncap = all->chunk->cap ? 2 * all->chunk->cap : 4;
-      all->chunk->stmt = MPoolRealloc(p->pool,
-                                      all->chunk->stmt,
-                                      sizeof(Node*)*all->chunk->sz,
-                                      sizeof(Node*)*ncap);
-      all->chunk->cap  = ncap;
-    }
-    all->chunk->stmt[all->chunk->sz++] = stmt;
+    CodeChunkAddStmt(p,all->chunk,stmt);
   }
 
-  SymTableDelete(&(scp.base.stb));
+done:
+  assert(p->lp_cnt == 0);
+  return all;
+}
 
-  assert(p->scp == NULL);
+PAPI NodeFile* Parse( LitPool* lpool , MPool* mpool , const char* src ) {
+  NodeFile* ret;
+  Parser p;
+
+  ParserInit(&p,lpool,mpool,src);
+  ret = ParseFile(&p);
+  ParserDelete(&p);
+
+  return ret;
 }
 
 /** ----------------------------------------------------------------
  * ToJSON
+ *
+ *  JSON is good for us to do unittesting, since all we need to do is
+ *  having a JSON parser. Another good format will be sexpression , but
+ *  using JSON is good enough for us to do automatic parsing testing.
+ *
  * ----------------------------------------------------------------*/
-static void _NodeToJSON  ( Parser* p, FILE* , const Node* );
-static void _LitToJSON   ( Parser* p, FILE* , const NodeLit*    );
-static void _IdToJSON    ( Parser* p, FILE* , const NodeId*     );
-static void _SLitToJSON  ( Parser* p, FILE* , const NodeStruLit*);
-static void _PrefixToJSON( Parser* p, FILE* , const NodePrefix* );
-static void _UnaToJSON   ( Parser* p, FILE* , const NodeUnary*  );
-static void _BinToJSON   ( Parser* p, FILE* , const NodeBinary* );
-static void _TenToJSON   ( Parser* p, FILE* , const NodeTernary* );
+static void _NodeToJSON    ( Parser* , FILE* , const Node* );
+static void _LitToJSON     ( Parser* , FILE* , const NodeLit*    );
+static void _IdToJSON      ( Parser* , FILE* , const NodeId*     );
+static void _SLitToJSON    ( Parser* , FILE* , const NodeStruLit*);
+static void _PrefixToJSON  ( Parser* , FILE* , const NodePrefix* );
+static void _UnaToJSON     ( Parser* , FILE* , const NodeUnary*  );
+static void _BinToJSON     ( Parser* , FILE* , const NodeBinary* );
+static void _TenToJSON     ( Parser* , FILE* , const NodeTernary* );
+static void _LocalToJSON   ( Parser* , FILE* , const NodeLocal*   );
+static void _AssignToJSON  ( Parser* , FILE* , const NodeAssign*  );
+static void _IfToJSON      ( Parser* , FILE* , const NodeIf*      );
+static void _ForToJSON     ( Parser* , FILE* , const NodeFor*     );
+static void _ContinueToJSON( Parser* , FILE* , const NodeContinue* );
+static void _BreakToJSON   ( Parser* , FILE* , const NodeBreak*    );
+static void _ReturnToJSON  ( Parser* , FILE* , const NodeReturn*  );
+static void _FuncToJSON    ( Parser* , FILE* , const NodeFunc*    );
+static void _GlobalToJSON  ( Parser* , FILE* , const NodeGlobal*  );
+static void _StructToJSON  ( Parser* , FILE* , const NodeStructDef* );
+static void _FileToJSON    ( Parser* , FILE* , const NodeFile*    );
 
 // Dump the expression into JSON format for better visualization or
 // unittest purpose since JSON is a universally parsable format and
 // it is easy to hook it into other toolings
-void NodeToJSON( Parser* p, FILE* output , const Node* e ) {
-  _NodeToJSON(p,output,e);
+void NodeToJSON( LitPool* lpool , MPool* mpool , FILE* output , const Node* e ) {
+  Parser p;
+  p.lpool = lpool;
+  p.pool  = mpool;
+
+  _NodeToJSON(&p,output,e);
 }
 
 static void _NodeToJSON( Parser* p, FILE* f, const Node* e ) {
   switch(e->type) {
-    case ENT_LIT: _LitToJSON(p,f,(const NodeLit*)e); break;
-    case ENT_ID:  _IdToJSON (p,f,(const NodeId* )e); break;
-    case ENT_STRULIT: _SLitToJSON(p,f,(const NodeStruLit*)e); break;
-    case ENT_PREFIX: _PrefixToJSON(p,f,(const NodePrefix*)e); break;
-    case ENT_UNARY:  _UnaToJSON(p,f,(const NodeUnary*)e); break;
-    case ENT_BINARY: _BinToJSON(p,f,(const NodeBinary*)e); break;
-    case ENT_TERNARY: _TenToJSON(p,f,(const NodeTernary*)e); break;
+    case ENT_LIT:       _LitToJSON(p,f,(const NodeLit*)e);       break;
+    case ENT_ID:        _IdToJSON (p,f,(const NodeId* )e);       break;
+    case ENT_STRULIT:   _SLitToJSON(p,f,(const NodeStruLit*)e);  break;
+    case ENT_PREFIX:    _PrefixToJSON(p,f,(const NodePrefix*)e); break;
+    case ENT_UNARY:     _UnaToJSON(p,f,(const NodeUnary*)e);     break;
+    case ENT_BINARY:    _BinToJSON(p,f,(const NodeBinary*)e);    break;
+    case ENT_TERNARY:   _TenToJSON(p,f,(const NodeTernary*)e);   break;
+    case ENT_LOCAL:     _LocalToJSON(p,f,(const NodeLocal*)e);   break;
+    case ENT_ASSIGN:    _AssignToJSON(p,f,(const NodeAssign*)e); break;
+    case ENT_IF:        _IfToJSON(p,f,(const NodeIf*)e);         break;
+    case ENT_FOR:       _ForToJSON(p,f,(const NodeFor*)e);       break;
+    case ENT_CONTINUE:  _ContinueToJSON(p,f,(const NodeContinue*)e); break;
+    case ENT_BREAK:     _BreakToJSON(p,f,(const NodeBreak*)e); break;
+    case ENT_RETURN:    _ReturnToJSON(p,f,(const NodeReturn*)e); break;
+    case ENT_FUNC:      _FuncToJSON(p,f,(const NodeFunc*)e);     break;
+    case ENT_STRUCT_DEF:_StructToJSON(p,f,(const NodeStructDef*)e); break;
+    case ENT_GLOBAL:    _GlobalToJSON(p,f,(const NodeGlobal*)e); break;
+    case ENT_FILE:      _FileToJSON(p,f,(const NodeFile*)e);     break;
     default: assert(0); break;
   }
 }
@@ -1225,30 +1205,9 @@ static void _PrintEscStr( FILE* f , const char* str ) {
   fprintf(f,"\"");
 }
 
-static void _PrintRawType( Parser* p , FILE* f , const Type* t ) {
-  switch(t->tag) {
-    case ET_STR:
-      fprintf(f,"str");
-      break;
-    case ET_ARR:
-      {
-        const ArrType* at = (const ArrType*)(t);
-        _PrintRawType(p,f,at->type);
-        fprintf(f,"[%d]",(int)at->len);
-      }
-      break;
-    case ET_STRUCT:
-      {
-        const StructType* st = (const StructType*)(t);
-        fprintf(f,"struct %s",LitPoolId(p->lpool,st->name));
-      }
-      break;
-    case ET_FUNC:
-      {
-        const FuncType* ft = (const FuncType*)(t);
-        fprintf(f,"func %s",LitPoolId(p->lpool,ft->name));
-      }
-      break;
+static void _PrintPrimType( FILE* f , EType t ) {
+  switch(t) {
+    case ET_STR: fprintf(f,"str"); break;
     case EPT_INT: fprintf(f,"int"); break;
     case EPT_DBL: fprintf(f,"dbl"); break;
     case EPT_CHAR: fprintf(f,"char"); break;
@@ -1258,8 +1217,26 @@ static void _PrintRawType( Parser* p , FILE* f , const Type* t ) {
   }
 }
 
-static void _PrintType( Parser* p , FILE* f , const Type* t ) {
-  fprintf(f,"\""); _PrintRawType(p,f,t); fprintf(f,"\"");
+static void _PrintRawType( Parser* p , FILE* f , const TypeInfo* t ) {
+  switch(t->type) {
+    case ET_ARR:
+      _PrintPrimType(f,t->extra.arr.t);
+      fprintf(f,"[%d]",(int)t->extra.arr.len);
+      break;
+    case ET_STRUCT:
+      fprintf(f,"struct %s",LitPoolId(p->lpool,t->extra.name));
+      break;
+    case ET_FUNC:
+      fprintf(f,"func %s",LitPoolId(p->lpool,t->extra.name));
+      break;
+    default:
+      _PrintPrimType(f,t->type);
+      break;
+  }
+}
+
+static void _PrintType( Parser* p , FILE* f , const TypeInfo* tinfo ) {
+  fprintf(f,"\""); _PrintRawType(p,f,tinfo); fprintf(f,"\"");
 }
 
 static void _LitToJSON( Parser* p, FILE* f , const NodeLit* lit ) {
@@ -1280,12 +1257,11 @@ static void _IdToJSON( Parser* p , FILE* f , const NodeId* id ) {
 }
 
 static void _SLitToJSON( Parser* p , FILE* f , const NodeStruLit* slit ) {
-  fprintf(f,"{ \"type\" : \"struct-literal\" , \"name\" : \"%s\" , value : [ " , LitPoolId(p->lpool,slit->ctype->name));
+  fprintf(f,"{ \"type\" : \"struct-literal\" , \"name\" : \"%s\" , value : [ ",LitPoolId(p->lpool,slit->ctype->name));
   {
     NodeStruLitAssign* field = slit->assign;
     for( ; field ; field = field->next ) {
-      fprintf(f,"{ \"type\" : " );
-      _PrintType(p,f,(const Type*)field->ftype);
+      fprintf(f,"{ \"name\" : \"%s\"" , LitPoolId(p->lpool,field->name));
       fprintf(f,", \"value\" : ");
       _NodeToJSON(p,f,field->value);
       fprintf(f,"}");
@@ -1371,9 +1347,160 @@ static void _TenToJSON( Parser*  p , FILE* f , const NodeTernary* e ) {
   fprintf(f,"}");
 }
 
+/** statement dump **/
+static void _CodeChunkToJSON( Parser* p , FILE* f , const CodeChunk* cc ) {
+  fprintf(f,"[");
+  for(size_t i = 0 ; i < cc->sz ; ++i) {
+    _NodeToJSON(p,f,cc->stmt[i]);
+    if(i < cc->sz-1) fprintf(f,",");
+  }
+  fprintf(f,"]");
+}
+
+static void _LocalToJSON( Parser* p , FILE* f , const NodeLocal* e ) {
+  fprintf(f,"{ \"type\" : \"local\" , \"ctype\" : ");
+  _PrintType(p,f,&(e->tinfo));
+  fprintf(f,", \"name\" : \"%s\"" ,LitPoolId(p->lpool,e->name));
+  fprintf(f,", \"rhs\"  : ");
+  _NodeToJSON(p,f,e->rhs);
+  fprintf(f,"}");
+}
+
+static void _AssignToJSON( Parser* p ,FILE* f , const NodeAssign* e ) {
+  fprintf(f,"{ \"type\" : \"assign\" , \"lhs\" : ");
+  _NodeToJSON(p,f,e->lhs);
+
+  fprintf(f,",\"rhs\" :");
+  _NodeToJSON(p,f,e->rhs);
+
+  fprintf(f,",\"op\" : \"%s\"}",TokenGetStr(e->op));
+}
+
+static void _IfToJSON( Parser* p , FILE* f , const NodeIf* e ) {
+  fprintf(f,"{ \"type\" : \"if\" , \"chain\" : [");
+  for( size_t i = 0 ; i < e->sz ; ++i ) {
+    NodeIfBranch* br = e->chains + i;
+    fprintf(f,"{ \"cond\" : ");
+    if(br->cond) {
+      _NodeToJSON(p,f,br->cond);
+    } else {
+      fprintf(f,"null");
+    }
+
+    fprintf(f,", \"body\":");
+    _CodeChunkToJSON(p,f,br->chunk);
+    if(i < e->sz-1) {
+      fprintf(f,"},");
+    } else {
+      fprintf(f,"}");
+    }
+  }
+
+  fprintf(f,"]}\n");
+}
+
+static void _ForToJSON( Parser* p , FILE* f , const NodeFor* e ) {
+  fprintf(f,"{ \"type\" : \"for\" , ");
+  {
+    fprintf(f,"\"init\" : ");
+    if(e->init) {
+      _NodeToJSON(p,f,e->init);
+    } else {
+      fprintf(f,"null");
+    }
+  }
+  {
+    fprintf(f,", \"cond\" : ");
+    if(e->cond) {
+      _NodeToJSON(p,f,e->cond);
+    } else {
+      fprintf(f,"null");
+    }
+  }
+  {
+    fprintf(f,", \"step\" : ");
+    if(e->step) {
+      _NodeToJSON(p,f,e->step);
+    } else {
+      fprintf(f,"null");
+    }
+  }
+
+  fprintf(f,",\"body\" :");
+  _CodeChunkToJSON(p,f,e->chunk);
+  fprintf(f,"}");
+}
+
+static void _BreakToJSON( Parser* p , FILE* f , const NodeBreak* e ) {
+  fprintf(f,"{ \"type\" : \"break\" }");
+}
+
+static void _ContinueToJSON( Parser* p , FILE* f , const NodeContinue* e ) {
+  fprintf(f,"{ \"type\" : \"continue\" }");
+}
+
+static void _ReturnToJSON( Parser* p , FILE* f , const NodeReturn* e ) {
+  fprintf(f,"{ \"type\" : \"return\" , \"value\" : ");
+  if(e->expr) {
+    _NodeToJSON(p,f,e->expr);
+  } else {
+    fprintf(f,"null");
+  }
+
+  fprintf(f,"}");
+}
+
+static void _FuncToJSON( Parser* p , FILE* f , const NodeFunc* e ) {
+  fprintf(f,"{ \"type\" : \"func\" , \"return\" : ");
+  _PrintType(p,f,&(e->rtype));
+  fprintf(f,", \"arg\" : [");
+  for( size_t i = 0 ; i < e->arg_sz ; ++i ) {
+    NodeFuncArgDef* def = e->arg + i;
+    fprintf(f,"{ \"name\" : \"%s\" ",LitPoolId(p->lpool,def->name));
+    fprintf(f,", \"type\" : ");
+    _PrintType(p,f,&(def->tinfo));
+    fprintf(f,"}");
+    if(i < e->arg_sz - 1)
+      fprintf(f,",");
+  }
+  fprintf(f,"], \"body\" :");
+  _CodeChunkToJSON(p,f,e->chunk);
+  fprintf(f,"}");
+}
+
+static void _GlobalToJSON( Parser* p ,FILE* f , const NodeGlobal* e ) {
+  fprintf(f,"{ \"type\" : \"global\" , \"ctype\" :");
+  _PrintType(p,f,&(e->tinfo));
+  fprintf(f,",\"value\" :");
+  _NodeToJSON(p,f,e->value);
+  fprintf(f,"}");
+}
+
+static void _StructToJSON( Parser* p , FILE* f , const NodeStructDef* e ) {
+  fprintf(f,"{ \"type\" : \"struct\" , \"name\" : \"%s\" ",LitPoolId(p->lpool,e->name));
+  fprintf(f,", \"field\": [");
+  for( size_t i = 0 ; i < e->sz ; ++i ) {
+    NodeStructDefField* fe = e->field + i;
+    fprintf(f,"{ \"name\" : \"%s\" ",LitPoolId(p->lpool,fe->name));
+    fprintf(f,", \"type\" : ");
+    _PrintType(p,f,&(fe->tinfo));
+    fprintf(f,"}");
+    if(i < e->sz-1) fprintf(f,",");
+  }
+  fprintf(f,"]}");
+}
+
+static void _FileToJSON( Parser* p , FILE* f , const NodeFile* e ) {
+  _CodeChunkToJSON(p,f,e->chunk);
+}
 
 #ifdef CONFIG_UNITTEST
-Node* ParseExpression( Parser* p ) {
-  return ParseExpr(p);
+Node* ParseExpression( LitPool* lpool , MPool* pool , const char* source ) {
+  Node* ret;
+  Parser p;
+  ParserInit(&p,lpool,pool,source);
+  ret = ParseExpr(&p);
+  ParserDelete(&p);
+  return ret;
 }
 #endif // CONFIG_UNITTEST

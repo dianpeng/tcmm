@@ -323,59 +323,6 @@ PAPI
 int TypeSysCanCast( TypeSys* , const Type* , const Type* );
 
 /* -------------------------------------------------------
- * Symbol
- * ------------------------------------------------------*/
-
-typedef enum _ESymType {
-  ST_ARG,
-  ST_GVAR,
-  ST_LVAR,
-  ST_UNKNOWN
-} ESymType;
-
-typedef struct _SymInfo {
-  LitIdx      name; // variable name
-  const Type* type; // variables' type
-} SymInfo;
-
-typedef struct _Sym {
-  SymInfo      info;
-  ESymType     type;
-} Sym;
-
-typedef struct _LVar {
-  Sym      base;    // symbol of the local varaibles
-  size_t offset;    // offset from the frame registers
-} LVar;
-
-typedef struct _GVar {
-  Sym      base;    // symbol of the global variables
-  size_t offset;    // offset from the global variable region
-} GVar;
-
-typedef struct _Arg {
-  Sym      base;
-  size_t offset;
-} Arg;
-
-typedef struct _SymTable {
-  Sym**   sym;
-  size_t   sz;
-  size_t  cap;
-  MPool*  pool;
-} SymTable;
-
-PAPI void          SymTableInit     ( SymTable* , MPool* );
-PAPI void          SymTableDelete   ( SymTable* );
-PAPI const Sym*    SymTableGet      ( SymTable* , LitIdx );
-PAPI const LVar*   SymTableGetLVar  ( SymTable* , LitIdx );
-PAPI const GVar*   SymTableGetGVar  ( SymTable* , LitIdx );
-PAPI const Arg*    SymTableGetArg   ( SymTable* , LitIdx );
-PAPI LVar*         SymTableSetLVar  ( SymTable* , LitIdx , const Type* );
-PAPI GVar*         SymTableSetGVar  ( SymTable* , LitIdx , const Type* );
-PAPI Arg*          SymTableSetArg   ( SymTable* , LitIdx , const Type* );
-
-/* -------------------------------------------------------
  * Parser
  * ------------------------------------------------------*/
 
@@ -397,6 +344,7 @@ typedef enum _ENodeType {
   ENT_BREAK,
   ENT_RETURN,
   ENT_FUNC,
+  ENT_STRUCT_DEF,
   ENT_GLOBAL,
   ENT_FILE
 } ENodeType;
@@ -407,26 +355,57 @@ typedef struct _Node {
   size_t dbg_end;
 } Node;
 
+// A structure to mark the *type info* of a node. During the parsing
+// the type is not resolved or *wont* be resolved. The type is fully
+// resolved during semantic check phase
+typedef struct _TypeInfo {
+  EType type;
+  union {
+    LitIdx name;
+    struct {
+      size_t len;
+      EType    t;
+    } arr;
+  } extra;
+} TypeInfo;
+
+typedef enum _EIdRefType {
+  EIRT_GLOBAL,
+  EIRT_LOCAL ,
+  EIRT_ARG
+} EIdRefType;
+
+typedef struct _IdRef {
+  EIdRefType ref_type;
+  union {
+    uint32_t slots;
+  } d;
+} IdRef;
+
 typedef struct _NodeLit {
-  Node    base;
-  LitIdx   lit;
+  Node         base;
+  LitIdx        lit;
+  const Type* ctype;
+  IdRef       idref;
 } NodeLit;
 
 typedef struct _NodeId {
-  Node    base;
-  LitIdx  name;
+  Node         base;
+  LitIdx       name;
+  TypeInfo    tinfo;
 } NodeId;
 
 typedef struct _NodeStruLitAssign {
   struct _NodeStruLitAssign* next;
-  const FieldType* ftype;
-  Node*            value;
+  LitIdx name;
+  Node*  value;
+  const FieldType* ctype;
 } NodeStruLitAssign;
 
 typedef struct _NodeStruLit {
   Node base;
-  const StructType* ctype;    // the type of the structure literals
   NodeStruLitAssign* assign;  // all the field assignment
+  const StructType* ctype;    // the type of the structure literals
 } NodeStruLit;
 
 typedef struct _NodePrefixCompCall {
@@ -457,12 +436,16 @@ typedef struct _NodePrefix {
   NodePrefixComp* comp;
   size_t          comp_sz;
   size_t          comp_cap;
+
+  const Type*     ctype;
 } NodePrefix;
 
 typedef struct _NodeUnary {
   Node       base;
   const Node* opr;
   Token        op;
+
+  const Type* ctype;
 } NodeUnary;
 
 typedef struct _NodeBinary {
@@ -470,6 +453,8 @@ typedef struct _NodeBinary {
   const Node* lhs;
   const Node* rhs;
   Token        op;
+
+  const Type* ctype;
 } NodeBinary;
 
 typedef struct _NodeTernary {
@@ -477,34 +462,36 @@ typedef struct _NodeTernary {
   const Node* first;
   const Node* second;
   const Node* third;
+
+  const Type* ctype;
 } NodeTernary;
 
 /** statements **/
-typedef struct _NodeChunk {
+typedef struct _CodeChunk {
   Node** stmt;
   size_t   sz;
   size_t  cap;
-} NodeChunk;
+} CodeChunk;
 
 typedef struct _NodeLocal {
-  Node   base;
-  const Type* ctype;
-  LitIdx name;
-  Node*   rhs;
+  Node         base;
+  TypeInfo    tinfo;
+  LitIdx       name;
+  Node*         rhs;
 } NodeLocal;
 
 typedef Node NodeAssignLHS;
 
 typedef struct _NodeAssign {
-  Node base;
+  Node          base;
   NodeAssignLHS* lhs;
   Node*          rhs;
-  int op;
+  Token           op;
 } NodeAssign;
 
 typedef struct _NodeIfBranch {
   Node* cond;
-  NodeChunk* chunk;
+  CodeChunk* chunk;
 } NodeIfBranch;
 
 typedef struct _NodeIf {
@@ -519,7 +506,7 @@ typedef struct _NodeFor {
   Node*           init;
   Node*           cond;
   Node*           step;
-  NodeChunk*     chunk;
+  CodeChunk*     chunk;
 } NodeFor;
 
 typedef struct _NodeBreak {
@@ -535,74 +522,53 @@ typedef struct _NodeReturn {
   Node*           expr;
 } NodeReturn;
 
-typedef struct _NodeFunction {
+typedef struct _NodeFuncArgDef {
+  TypeInfo tinfo;
+  LitIdx   name ;
+} NodeFuncArgDef;
+
+typedef struct _NodeFunc {
   Node            base;
-  const FuncType* type;
-  NodeChunk*     chunk;
-} NodeFunction;
+  CodeChunk*      chunk;
+  NodeFuncArgDef*   arg;
+  size_t         arg_sz;
+  size_t        arg_cap;
+  TypeInfo        rtype;
+
+  /** information **/
+  size_t          max_vsz;  // maximum variable size, used to decide stack reservation
+
+  /** semantic **/
+  const Type*    ctype;
+} NodeFunc;
 
 typedef struct _NodeGlobal {
   Node            base;
-  const Type*     type;
+  TypeInfo       tinfo;
   Node*          value;
+
+  const Type*    ctype;
 } NodeGlobal;
+
+typedef struct _NodeStructDefField {
+  LitIdx    name;
+  TypeInfo tinfo;
+} NodeStructDefField;
+
+typedef struct _NodeStructDef {
+  Node   base;
+  LitIdx name;
+  NodeStructDefField* field;
+  size_t                 sz;
+  size_t                cap;
+} NodeStructDef;
 
 typedef struct _NodeFile {
   Node            base;
-  NodeChunk*     chunk;
+  CodeChunk*     chunk;
 } NodeFile;
 
-struct _Scp;
-
-typedef struct _Parser {
-  LitPool* lpool;
-  TypeSys*  tsys;
-  Lexer    lexer;
-  MPool*    pool;
-  const char* err;
-
-  /** private **/
-  struct _Scp*   scp; // during parsing , hold the pointer to current scope object
-} Parser;
-
-typedef enum _EScpType {
-  SCPT_GLOBAL,
-  SCPT_FUNC  ,
-  SCPT_LEXICAL,
-  SCPT_UNKNOWN
-} EScpType;
-
-// Scope , used during parsing phase
-typedef struct _Scp {
-  struct _Scp* prev;  // previous scope
-  EScpType     type;  // types of the scope
-  SymTable      stb;
-} Scp;
-
-typedef struct _GlbScp {
-  Scp base;
-} GlbScp;
-
-typedef struct _FuncScp {
-  Scp             base;
-  const FuncType* type;
-  size_t          max_stksz; // maximum stack size
-} FuncScp;
-
-typedef struct _LexScp {
-  Scp      base;
-  FuncScp* fscp;        // top level function scope , no closure support so relative simple
-  size_t   vsz;         // all variable accumulated size that is nested up to now
-
-  /** flags **/
-  uint32_t in_loop : 1; // is a nested loop scope
-  uint32_t is_loop : 1; // is a loop scope itself
-} LexScp;
-
-PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* );
-PAPI void NodeToJSON( Parser* , FILE* , const Node* );
-
-PAPI void ParserInit( Parser* , LitPool* , TypeSys* , MPool* , const char* );
-PAPI void ParserDelete( Parser* );
+PAPI NodeFile* Parse     ( LitPool* , MPool* , const char* );
+PAPI void      NodeToJSON( LitPool* , MPool* , FILE* , const Node* );
 
 #endif // TCMM_H_

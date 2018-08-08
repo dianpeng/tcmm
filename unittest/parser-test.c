@@ -3,28 +3,41 @@
 #include <stdio.h>
 #include <cunitpp.h>
 
-extern Node* ParseExpression( Parser* );
+extern Node* ParseExpression( LitPool* , MPool* , const char* );
 
 TEST(Parser,Simple) {
   MPool   mpool;
   LitPool lpool;
-  TypeSys  tsys;
-  Parser      p;
   Node*     exp;
   const char* src = "true || false + 1";
 
   MPoolInit(&mpool,8,32);
   LitPoolInit(&lpool,&mpool);
-  TypeSysInit(&tsys,&lpool,&mpool);
-  ParserInit (&p,&lpool,&tsys,&mpool,src);
 
-  exp = ParseExpression(&p);
+  exp = ParseExpression(&lpool,&mpool,src);
   ASSERT_TRUE(exp);
-  NodeToJSON(&p,stderr,exp);
+  NodeToJSON(&lpool,&mpool,stderr,exp);
   fprintf(stderr,"\n");
 
-  ParserDelete(&p);
-  TypeSysDelete(&tsys);
+  LitPoolDelete(&lpool);
+  MPoolDelete(&mpool);
+}
+
+TEST(Parser,Stmt) {
+  MPool   mpool;
+  LitPool lpool;
+  NodeFile*   n;
+  const char* src = "int foo() {\n"
+                    "for( int a = 10 ; a < 20 ; a += 2) { break; }"
+                    "if(a) return 10 ; else for( ;; ) continue;   "
+                    "return 100;}";
+
+  MPoolInit(&mpool,8,32);
+  LitPoolInit(&lpool,&mpool);
+  n = Parse(&lpool,&mpool,src);
+  ASSERT_TRUE(n);
+  NodeToJSON(&lpool,&mpool,stderr,(Node*)n);
+  fprintf(stderr,"\n");
   LitPoolDelete(&lpool);
   MPoolDelete(&mpool);
 }
