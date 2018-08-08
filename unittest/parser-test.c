@@ -16,7 +16,7 @@ TEST(Parser,Simple) {
   MPoolInit(&mpool,8,32);
   LitPoolInit(&lpool,&mpool);
   TypeSysInit(&tsys,&lpool,&mpool);
-  ParserInit (&p,&lpool,&tsys,src);
+  ParserInit (&p,&lpool,&tsys,&mpool,src);
 
   exp = ParseExpression(&p);
   ASSERT_TRUE(exp);
@@ -26,6 +26,7 @@ TEST(Parser,Simple) {
   ParserDelete(&p);
   TypeSysDelete(&tsys);
   LitPoolDelete(&lpool);
+  MPoolDelete(&mpool);
 }
 
 int main( int argc , char* argv[] ) {

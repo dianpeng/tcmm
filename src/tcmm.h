@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
 #include "config.h"
 #include "arch.h"
 
@@ -47,6 +46,11 @@ typedef enum _ELitType {
   ELT_FALSE,
   ELT_ID,
 } ELitType;
+
+/**
+ * Literal pool guarantee dedup of literals , so comparison of each
+ * literal's equality can be done via compare its literal index
+ */
 
 typedef struct _Lit {
   union {
@@ -275,11 +279,9 @@ typedef struct _TypeSys {
   LitPool*      lpool;
 } TypeSys;
 
-PAPI
-void TypeSysInit( TypeSys* , LitPool* , MPool* );
+PAPI void TypeSysInit( TypeSys* , LitPool* , MPool* );
 
-PAPI
-void TypeSysDelete( TypeSys* );
+PAPI void TypeSysDelete( TypeSys* );
 
 // getter
 #define TypeSysGetInt(TS)  (const PrimitiveType*)(&((TS)->t_int))
@@ -289,17 +291,10 @@ void TypeSysDelete( TypeSys* );
 #define TypeSysGetVoid(TS) (const PrimitiveType*)(&((TS)->t_void))
 #define TypeSysGetStr(TS)  (const StrType*)(&((TS)->t_str))
 
-PAPI
-const StructType* TypeSysGetStruct( TypeSys* , LitIdx );
-
-PAPI
-const FieldType* TypeSysGetStructField( TypeSys* , const StructType* , LitIdx );
-
-PAPI
-const ArrType* TypeSysGetArr   ( TypeSys* , const Type* , size_t length );
-
-PAPI
-const FuncType* TypeSysGetFunc  ( TypeSys* , LitIdx );
+PAPI const StructType* TypeSysGetStruct( TypeSys* , LitIdx );
+PAPI const FieldType* TypeSysGetStructField( TypeSys* , const StructType* , LitIdx );
+PAPI const ArrType* TypeSysGetArr   ( TypeSys* , const Type* , size_t length );
+PAPI const FuncType* TypeSysGetFunc  ( TypeSys* , LitIdx );
 
 // setter
 // struct type
@@ -335,16 +330,8 @@ typedef enum _ESymType {
   ST_ARG,
   ST_GVAR,
   ST_LVAR,
-  ST_DEFINE,
   ST_UNKNOWN
 } ESymType;
-
-typedef enum _EScpType {
-  SCT_GLOBAL,
-  SCT_FUNC  ,
-  SCT_LEXICAL,
-  SCT_UNKNOWN
-} EScpType;
 
 typedef struct _SymInfo {
   LitIdx      name; // variable name
@@ -371,10 +358,6 @@ typedef struct _Arg {
   size_t offset;
 } Arg;
 
-typedef struct _Define {
-  Sym base;
-} Define;
-
 typedef struct _SymTable {
   Sym**   sym;
   size_t   sz;
@@ -382,42 +365,15 @@ typedef struct _SymTable {
   MPool*  pool;
 } SymTable;
 
-PAPI void SymTableInit  ( SymTable* , MPool* );
-PAPI void SymTableDelete( SymTable* );
+PAPI void          SymTableInit     ( SymTable* , MPool* );
+PAPI void          SymTableDelete   ( SymTable* );
+PAPI const Sym*    SymTableGet      ( SymTable* , LitIdx );
 PAPI const LVar*   SymTableGetLVar  ( SymTable* , LitIdx );
 PAPI const GVar*   SymTableGetGVar  ( SymTable* , LitIdx );
 PAPI const Arg*    SymTableGetArg   ( SymTable* , LitIdx );
-PAPI const Define* SymTableGetDefine( SymTable* , LitIdx );
 PAPI LVar*         SymTableSetLVar  ( SymTable* , LitIdx , const Type* );
 PAPI GVar*         SymTableSetGVar  ( SymTable* , LitIdx , const Type* );
 PAPI Arg*          SymTableSetArg   ( SymTable* , LitIdx , const Type* );
-PAPI Define*       SymTableSetDefine( SymTable* , LitIdx , const Type* );
-
-// Scope representation
-typedef struct _Scp {
-  struct _Scp* prev;  // previous scope
-  EScpType     type;  // types of the scope
-} Scp;
-
-typedef struct _GlbScp {
-  Scp     base;
-  SymTable stb;
-} GlbScp;
-
-typedef struct _FuncScp {
-  Scp             base;
-  SymTable         stb;
-  const FuncType* type;
-  size_t     max_stksz; // maximum stack size
-} FuncScp;
-
-typedef struct _LexScp {
-  Scp      base;
-  SymTable stb;
-  size_t   vsz;         // all variable accumulated size that is nested up to now
-  uint32_t in_loop : 1;
-  uint32_t is_loop : 1;
-} LexScp;
 
 /* -------------------------------------------------------
  * Parser
@@ -431,7 +387,10 @@ typedef enum _ENodeType {
   ENT_PREFIX,
   ENT_UNARY,
   ENT_BINARY,
-  ENT_TERNARY
+  ENT_TERNARY,
+  // stmt
+  ENT_LOCAL,
+  ENT_ASSIGN
 } ENodeType;
 
 typedef struct _Node {
@@ -519,15 +478,14 @@ typedef struct _NodeChunk {
   size_t  cap;
 } NodeChunk;
 
-typedef NodePrefix NodeCall;
-
 typedef struct _NodeLocal {
-  Node base;
+  Node   base;
+  const Type* ctype;
   LitIdx name;
   Node*   rhs;
 } NodeLocal;
 
-typedef NodePrefix NodeAssignLHS;
+typedef Node NodeAssignLHS;
 
 typedef struct _NodeAssign {
   Node base;
@@ -553,6 +511,7 @@ typedef struct _NodeFor {
   Node*           init;
   Node*           cond;
   Node*           step;
+  NodeChunk*     chunk;
 } NodeFor;
 
 typedef struct _NodeBreak {
@@ -574,19 +533,57 @@ typedef struct _NodeFunction {
   NodeChunk*     chunk;
 } NodeFunction;
 
+struct _Scp;
+
 typedef struct _Parser {
   LitPool* lpool;
   TypeSys*  tsys;
   Lexer    lexer;
-  MPool     pool;
-
+  MPool*    pool;
   const char* err;
+
+  /** private **/
+  struct _Scp*   scp; // during parsing , hold the pointer to current scope object
 } Parser;
+
+typedef enum _EScpType {
+  SCPT_GLOBAL,
+  SCPT_FUNC  ,
+  SCPT_LEXICAL,
+  SCPT_UNKNOWN
+} EScpType;
+
+// Scope , used during parsing phase
+typedef struct _Scp {
+  struct _Scp* prev;  // previous scope
+  EScpType     type;  // types of the scope
+  SymTable      stb;
+} Scp;
+
+typedef struct _GlbScp {
+  Scp      base;
+} GlbScp;
+
+typedef struct _FuncScp {
+  Scp             base;
+  const FuncType* type;
+  size_t          max_stksz; // maximum stack size
+} FuncScp;
+
+typedef struct _LexScp {
+  Scp      base;
+  FuncScp* fscp;        // top level function scope , no closure support so relative simple
+  size_t   vsz;         // all variable accumulated size that is nested up to now
+
+  /** flags **/
+  uint32_t in_loop : 1; // is a nested loop scope
+  uint32_t is_loop : 1; // is a loop scope itself
+} LexScp;
 
 PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* );
 PAPI void NodeToJSON( Parser* , FILE* , const Node* );
 
-PAPI void ParserInit( Parser* , LitPool* , TypeSys* , const char* );
+PAPI void ParserInit( Parser* , LitPool* , TypeSys* , MPool* , const char* );
 PAPI void ParserDelete( Parser* );
 
 #endif // TCMM_H_

@@ -1,0 +1,11 @@
+This directory contains bindings for Keystone.
+See <language>/README* for how to install each binding.
+
+Except Python, all other bindings are contributed by community.
+
+- NodeJS binding: by Ingmar Steen
+- Ruby binding: by Sascha Schirra
+- Go binding: by Remco Verhoef
+- Rust binding: by Remco Verhoef
+- Haskell binding: by Adrian Herrera
+- OCaml binding: by Aziem Chawdhary

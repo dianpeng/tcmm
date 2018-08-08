@@ -35,6 +35,14 @@ static Sym* SymTableFind( SymTable* st , LitIdx idx , ESymType t ) {
   return NULL;
 }
 
+PAPI const Sym*  SymTableGetSym ( SymTable* st , LitIdx idx ) {
+  for( size_t i = 0 ; i < st->sz ; ++i ) {
+    if(st->sym[i]->info.name == idx)
+      return st->sym[i];
+  }
+  return NULL;
+}
+
 PAPI const LVar* SymTableGetLVar( SymTable* st , LitIdx idx ) {
   return (const LVar*)SymTableFind(st,idx,ST_LVAR);
 }
@@ -45,10 +53,6 @@ PAPI const GVar* SymTableGetGVar( SymTable* st , LitIdx idx ) {
 
 PAPI const Arg* SymTableGetArg( SymTable* st , LitIdx idx ) {
   return (const Arg*)SymTableFind(st,idx,ST_ARG);
-}
-
-PAPI const Define* SymTableGetDefine( SymTable* st , LitIdx idx ) {
-  return (const Define*)SymTableFind(st,idx,ST_DEFINE);
 }
 
 PAPI LVar* SymTableSetLVar( SymTable* st , LitIdx idx , const Type* type ) {
@@ -83,17 +87,6 @@ PAPI Arg* SymTableSetArg( SymTable* st , LitIdx idx , const Type* type ) {
     obj->base.info.type = type;
     obj->base.type      = ST_ARG;
     obj->offset         = 0;
-    return obj;
-  }
-}
-
-PAPI Define* SymTableSetDefine( SymTable* st , LitIdx idx , const Type* type ) {
-  assert( SymTableGetDefine(st,idx) == NULL );
-  {
-    Define* obj = (Define*)SymTableInsert(st,sizeof(Define));
-    obj->base.info.name = idx;
-    obj->base.info.type = type;
-    obj->base.type      = ST_DEFINE;
     return obj;
   }
 }

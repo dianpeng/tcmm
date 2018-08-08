@@ -9,18 +9,21 @@
 
 #define EXPR_MEMPOOL_SIZE 512
 
-#define GRAB(XX) (MPoolGrab(&(p->pool),sizeof(XX)))
+#define GRAB(XX) (MPoolGrab((p->pool),sizeof(XX)))
 #define L(XX)    (&((XX)->lexer))
 #define LEX(XX)  (&(L(XX)->lexeme))
 #define NEXT(P)  LexerNext(L(P))
 
-#define EXPECT(P,TK)                                                     \
+#define EXPECTR(P,TK,STMT)                                               \
   do {                                                                   \
     if((TK) != LEX(P)->tk) {                                             \
       ParserError((P),"expect token %s", TokenGetStr(L(P)->lexeme.tk));  \
+      STMT;                                                              \
     }                                                                    \
     NEXT(P);                                                             \
   } while(0)
+
+#define EXPECT(P,TK) EXPECTR(P,TK,return NULL)
 
 static void ParserError( Parser* p , const char* fmt , ... ) {
   char buf[1024];
@@ -40,20 +43,138 @@ PAPI NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* pool ) {
   return p->comp + p->comp_sz++;
 }
 
-PAPI void ParserInit( Parser* p , LitPool* lpool , TypeSys* tsys , const char* src ) {
+PAPI void ParserInit( Parser* p , LitPool* lpool , TypeSys* tsys , MPool* mpool ,
+                                                                   const char* src ) {
   p->lpool = lpool;
   p->tsys  = tsys;
+  p->pool  = mpool;
   LexerInit(&(p->lexer),lpool,src);
-  MPoolInit(&(p->pool) ,1024 ,1024*64);
-  p->err   = NULL;
-
   LexerNext(&(p->lexer)); // fire the lexer
 }
 
 PAPI void ParserDelete( Parser* p ) {
   LexerDelete(&(p->lexer));
-  MPoolDelete(&(p->pool));
-  free((void*)p->err);
+}
+
+/** ------------------------------------------------
+ * Scope
+ * ------------------------------------------------*/
+static LexScp* LexScpEnter( Parser* p , LexScp* lscp , int is_loop ) {
+  Scp* pscp = p->scp;
+
+  lscp->base.prev = pscp;
+  lscp->base.type = SCPT_LEXICAL;
+  SymTableInit(&(lscp->base.stb),p->pool);
+
+  if(pscp->base.type == SCPT_LEXICAL) {
+    LexScp* pp = (LexScp*)pscp;
+    // accumulated variable size
+    lscp->vsz = pp->vsz + pp->stb.sz;
+    lscp->in_loop = is_loop || pp->in_loop || pp->is_loop;
+    lscp->is_loop = is_loop;
+    lscp->fscp    = pp->fscp;
+  } else {
+    assert(pscp->base.type == SCPT_FUNC);
+    assert(is_loop == 0);
+    {
+      FuncScp* fscp = (FuncScp*)pscp;
+      lscp->vsz = 0;
+      lscp->in_loop = 0;
+      lscp->is_loop = 0;
+      lscp->fscp    = fscp;
+    }
+  }
+
+  // update the current scope context
+  p->scp = (Scp*)lscp;
+
+  return lscp;
+}
+
+static FuncScp* FuncScpEnter( Parser* p , FuncScp* scp , const Type* ft ) {
+  assert(p->scp->type == SCPT_GLOBAL);
+  {
+    GlbScp* pscp = (GlbScp*)(p->scp);
+    scp->base.prev = (Scp*)pscp;
+    scp->base.type = SCPT_FUNC;
+    SymTableInit(&(scp->base.stb),p->pool);
+    scp->type = ft;
+    scp->max_stksz = 0;
+
+    p->scp = (Scp*)scp;
+    return scp;
+  }
+}
+
+static Scp* ScpLeave( Parser* p ) {
+  Scp* scp = p->scp;
+
+  if(scp->base.type == SCPT_LEXICAL) {
+    LexScp* lscp = (LexScp*)(scp);
+
+    size_t max_vsz = lscp->vsz + lscp->stb.sz;
+    if(max_vsz > lscp->fscp->max_stksz)
+      lscp->fscp->max_stksz = max_vsz;
+  }
+  SymTableDelete(&(scp->base.stb));
+  p->scp = scp->base.prev;
+  return p->scp;
+}
+
+static inline FuncScp* CurFScp( Parser* p ) {
+  assert( p->scp && p->scp->base.type == SCPT_FUNC );
+  return (FuncScp*)(p->scp);
+}
+
+static inline LexScp* CurLScp ( Parser* p ) {
+  assert( p->scp && p->scp->base.type == SCPT_LEXICAL );
+  return (LexScp*)(p->scp);
+}
+
+static inline GlbScp* CurGScp ( Parser* p ) {
+  assert( p->scp && p->scp->base.type == SCPT_GLOBAL );
+  return (GlbScp*)(p->scp);
+}
+
+static inline FuncScp* FScp( Parser* p ) {
+  if(p->scp->type == SCPT_FUNC)
+    return (FuncScp*)p->scp;
+  if(p->scp->type == SCPT_LEXICAL)
+    return ((LexScp*)(p->scp))->fscp;
+
+  return NULL;
+}
+
+// resolve a symbol name based on a literal index
+static inline Sym* FindSym( Parser* p , LitIdx name ) {
+  Scp* cscp = p->scp;
+  while(cscp) {
+    Sym* ret = SymTableGet(&(cscp->stb),name);
+    if(ret) return ret;
+    cscp = cscp->base.prev;
+  }
+  return NULL;
+}
+
+static inline LVar* DefineLVar( Parser* p , LitIdx name , const Type* t ) {
+  assert(p->scp->base.type == SCPT_LEXICAL);
+  if(SymTableGetLVar(&(p->scp->base.stb),name))
+    return NULL;
+  return SymTableSetLVar(&(p->scp->base.stb),name,t);
+}
+
+static inline GVar* DefineGVar( Parser* p , LitIdx name , const Type* t ) {
+  assert(p->scp->base.type == SCPT_GLOBAL);
+  if(SymTableGetGVar(&(p->scp->base.stb),name))
+    return NULL;
+  return SymTableSetGVar(&(p->scp->base.stb),name,t);
+}
+
+static inline Arg* DefineArg( Parser* p , LitIdx name , const Type* t ) {
+  assert(p->scp->base.type == SCPT_FUNCTION);
+  if(SymTableGetArg(&(p->scp->base.stb),name))
+    return NULL;
+  return SymTableSetArg(&(p->scp->base.stb),name,t);
 }
 
 /** ------------------------------------------------
@@ -221,7 +342,7 @@ static Node* ParsePrimary( Parser* p ) {
 static NodePrefixComp* ParseCall( Parser* p , NodePrefix* pp ) {
   size_t dbg_start = L(p)->pos;
 
-  NodePrefixComp* c = NodePrefixAddComp(pp,&(p->pool));
+  NodePrefixComp* c = NodePrefixAddComp(pp,(p->pool));
   c->comp_type = EEPCT_CALL;
   c->c.call    = GRAB(NodePrefixCompCall);
   c->c.call->sz= 0;
@@ -286,14 +407,14 @@ static Node* ParsePrefix( Parser* p ) {
             ParserError(p,"expect a ID here");
             return NULL;
           }
-          c            = NodePrefixAddComp(prefix,&(p->pool));
+          c            = NodePrefixAddComp(prefix,(p->pool));
           c->comp_type = EEPCT_DOT;
           c->c.name    = LEX(p)->lit;
           NEXT(p);
           break;
         case TK_LSQR:
           NEXT(p); // skip [
-          c = NodePrefixAddComp(prefix,&(p->pool));
+          c = NodePrefixAddComp(prefix,(p->pool));
           if(!(c->c.idx = ParseExpr(p))) return NULL;
           c->comp_type= EEPCT_IDX;
           EXPECT(p,TK_RSQR);
@@ -446,6 +567,410 @@ static Node* ParseTernary( Parser* p ) {
 }
 
 static Node* ParseExpr( Parser* p ) { return ParseTernary(p); }
+
+/** ----------------------------------------------------------------
+ * Statment
+ * ----------------------------------------------------------------*/
+static void ChunkAddStmt( Parser* p , NodeChunk* ck , Node* stmt ) {
+  if(ck->sz == ck->cap) {
+    size_t ncap = ck->cap ? ck->cap * 2 : 2;
+    ck->stmt = MPoolRealloc(p->pool,ck->stmt,sizeof(Node*)*ck->sz,ncap*sizeof(Node*));
+    ck->cap  = ncap;
+  }
+  ck->cap[ck->sz++] = stmt;
+}
+
+// Parse a declaration. A declaration is something as following :
+// type id array-modifier
+static int ParseVDec( Parser* , const Type** , LitIdx* ref );
+
+static NodeChunk* ParseChunk       ( Parser* , int );
+static NodeChunk* ParseChunkOrSStmt( Parser* , int );
+
+static Node* ParseLocal       ( Parser* );
+static Node* ParseCallOrAssign( Parser* );
+static Node* ParseIf          ( Parser* );
+static Node* ParseFor         ( Parser* );
+static Node* ParseContinue    ( Parser* );
+static Node* ParseBreak       ( Parser* );
+static Node* ParseReturn      ( Parser* );
+static Node* ParseStmt        ( Parser* );
+
+static int ParseVDec( Parser* p , const Type** out_tp , LitIdx* ref ) {
+  switch(LEX(p)->tk) {
+    case TK_INT:
+      *out_tp = (const Type*)TypeSysGetInt(p->tsys);
+      break;
+    case TK_DBL:
+      *out_tp = (const Type*)TypeSysGetDbl(p->tsys);
+      break;
+    case TK_BOOL:
+      *out_tp = (const Type*)TypeSysGetBool(p->tsys);
+      break;
+    case TK_CHAR:
+      *out_tp = (const Type*)TypeSysGetChar(p->tsys);
+      break;
+    case TK_STR:
+      *out_tp = (const Type*)TypeSysGetStr (p->tsys);
+      break;
+    case TK_STRUCT:
+      {
+        LitIdx tid;
+        NEXT(p);
+        if(LEX(p)->tk != TK_ID) {
+          ParserError(p,"expect a ID name after the struct");
+          return -1;
+        }
+        tid = LEX(p)->lit;
+        *out_tp = (const Type*)TypeSysGetStruct(p->tsys,tid);
+        if(!*out_tp) {
+          ParserError(p,"struct type %s is not found",LitPoolId(p->tsys,tid));
+          return -1;
+        }
+      }
+      break;
+    default:
+      ParserError(p,"void type cannot be used for declare variable");
+      return -1;
+  }
+
+  NEXT(p); // skip the whole type name
+
+  if(LEX(p)->tk != TK_ID) {
+    ParserError(p,"expect a ID name after the type");
+    return -1;
+  }
+
+  *ref = LEX(p)->lit;
+  NEXT(p); // skip the name
+
+  // try to check if there's any trailing array specifier
+  if(LEX(p)->tk == TK_LSQR) {
+    size_t len;
+
+    // this is an array type since it has a array modifier
+    NEXT(p); // skip [
+    if(LEX(p)->tk != TK_LIT_INT) {
+      ParserError(p,"expect a literal integer serve as array length");
+      return -1;
+    }
+
+    len = (size_t)LitPoolInt(p->tsys,LEX(p)->lit);
+    if(len == 0) {
+      ParserError(p,"array length cannot be 0");
+      return -1;
+    }
+
+    // for array if it is not defined, then just try to define it
+    {
+      ArrType* at = TypeSysGetArr(p->tsys,*out_tp,len);
+      if(!at) {
+        at = TypeSysSetArr(p->tsys,*out_tp,len);
+        *out_tp = (const Type*)(at);
+      }
+    }
+
+    NEXT(p);
+    EXPECTR(p,TK_RSQR,return -1);
+  }
+
+  return 0;
+}
+
+
+// Parsing local variable definition or declaration.
+// lvar := def | dec
+// def  := type id array-modifier ';'
+// dec  := type id array-modifier '=' expr ';'
+static Node* ParseLocal( Parser* p ) {
+  const Type* tp;
+  LitIdx      vid;
+  size_t      dbg_start = L(p)->pos;
+  NodeLocal*  l;
+
+  if(ParseVDec(p,&tp,&vid)) return NULL;
+
+  l = GRAB(NodeLocal);
+
+  l->base.type      = ENT_LOCAL;
+  l->base.dbg_start = dbg_start;
+  l->base.dbg_end   = L(p)->pos;
+  l->ctype          = tp;
+  l->name           = vid;
+  l->rhs            = NULL;
+
+  // now check whether there's trailing assignment or not
+  if(LEX(p)->tk == TK_ASSIGN) {
+    NEXT(p); // skip =
+    if(!(l->rhs = ParseExpr(p)))
+      return NULL;
+  }
+
+  EXPECT(p,TK_SEMICOLON); // skip ;
+  return (Node*)l;
+}
+
+static int IsNodeLHS( Node* n ) {
+  if(lhs->base.type == ENT_ID || lhs->base.type == ENT_PREFIX) {
+    if(lhs->base.type == ENT_PREFIX) {
+      NodePrefix* np = (NodePrefix*)(lhs);
+      // function call cannot be used as LHS
+      if(np->comp[np->comp_sz-1].comp_type == EEPCT_CALL) {
+        goto not;
+      }
+    }
+    return 1;
+  }
+
+not:
+  return 0;
+}
+
+static int IsAssignOp( Token tk ) {
+  return tk == TK_ASSIGN ||
+         tk == TK_SADD   ||
+         tk == TK_SSUB   ||
+         tk == TK_SMUL   ||
+         tk == TK_SDIV;
+}
+
+static Node* ParseCallOrAssign( Parser* p ) {
+  size_t dbg_start = L(p)->pos;
+
+  Node* lhs = ParseExpr(p); // try to parse if as a lhs expression
+  if(IsAssignOp(LEX(p)->tk)) {
+    NodeAssign* n;
+    Node*     rhs;
+    Token      op = LEX(p)->tk;
+
+    if(!IsNodeLHS(n)) {
+      ParserError(p,"not valid left hand side, cannot be used as assignment");
+      return NULL;
+    }
+
+    NEXT(p); // skip assignment token
+    if(!(rhs = ParseExpr(p)))
+      return NULL;
+    EXPECT(p,TK_SEMICOLON);
+
+    n = GRAB(NodeAssign);
+
+    n->base.type = ENT_ASSIGN;
+    n->base.dbg_start = dbg_start;
+    n->base.dbg_end   = L(p)->pos;
+    n->lhs            = lhs;
+    n->rhs            = rhs;
+    n->op             = op;
+
+    return (Node*)n;
+  } else {
+    // now this statement *must* be a call otherwise it is not allowed
+    if(lhs->base.type == ENT_PREFIX) {
+      NodePrefix* p = (NodePrefix*)(lhs);
+      if(p->comp[p->comp_sz-1].comp_type == EEPCT_CALL) {
+        EXPECT(p,TK_SEMICOLON);
+        return lhs;
+      }
+    }
+
+    ParserError(p,"meaningless statement, expect a call");
+    return NULL;
+  }
+}
+
+static int ParseBranch( Parser* p , NodeIf* n , int is_else ) {
+  Node* cond = NULL;
+  NodeIfBranch* if_br;
+
+  if(!is_else) {
+    // try to parse the condition
+    if(LEX(p)->tk == TK_LPAR) {
+      if(!(cond = ParseExpr(p))) return NULL;
+      EXEPECTR(p,TK_RPAR,return -1);
+    }
+  }
+
+  if(n->sz == n->cap) {
+    size_t ncap = n->cap ? 2 * n->cap : 2;
+    n->chains = MPoolRealloc(p->pool,n->chains,sizeof(NodeIfBranch)*n->size,sizeof(NodeIfBranch)*ncap);
+    n->cap    = ncap;
+  }
+
+  if_br = n->chains + n->sz++;
+
+  if(!(if_br->chunk = ParseChunkOrSStmt(p,0)))
+    return NULL;
+  if_br = cond;
+
+  return 0;
+}
+
+static Node* ParseIf( Parser* p ) {
+  size_t dbg_start = L(p)->pos;
+  NodeIf* n        = GRAB(NodeIf);
+
+  n->base.type = ENT_IF;
+  n->base.dbg_start = dbg_start;
+
+  // parse the leading if
+  NEXT(p); // skip if
+  if(!ParseBranch(p,n,0))
+    return NULL;
+
+  // elif cluster
+  while(LEX(p)->tk == TK_ELIF) {
+    NEXT(p);
+    if(!ParseBranch(p,n,0)) return NULL;
+  }
+
+  // dangling else
+  if(LEX(p)->tk == TK_ELSE) {
+    NEXT(p);
+    if(!ParseBranch(p,n,1)) return NULL;
+  }
+
+  n->base.dbg_end = L(p)->pos;
+  return (Node*)n;
+}
+
+// A short-stmt is a stmt that allows following stuff:
+// 1. a normal statment that does *call* or assignment
+// 2. a declaration/definition
+static Node* ParseShortStmt( Parser* p ) {
+  switch(LEX(p)->tk) {
+    case TK_INT:
+    case TK_DBL:
+    case TK_VOID:
+    case TK_CHAR:
+    case TK_STR:
+    case TK_STRUCT:
+      return ParseLocal(p);
+    default:
+      return ParseCallOrAssign(p);
+  }
+}
+
+static Node* ParseFor( Parser* p ) {
+  size_t  dbg_start = L(p)->pos;
+  NodeFor* n = GRAB(NodeFor);
+  LexScp   lscp;
+  NodeFor* ret;
+
+  Node* init = NULL;
+  Node* cond = NULL;
+  Node* step = NULL;
+  NodeChunk* ck = NULL;
+
+  NEXT(p); EXPECT(p,TK_LPAR);
+
+  // setup a new lexical scope
+  LexScpEnter(p,&lscp,1);
+
+  // initialize stmt
+  if(LEX(p)->tk == TK_SEMICOLON)
+    NEXT(p);
+  else {
+    // this function eats the semicolon
+    if(!(init = ParseShortStmt(p)))
+      return NULL;
+  }
+
+  if(LEX(p)->tk == TK_SEMICOLON)
+    NEXT(p);
+  else {
+    if(!(cond = ParseExpr(p))) return NULL;
+    EXPECT(p,TK_SEMICOLON);
+  }
+
+  if(LEX(p)->tk == TK_RPAR)
+    NEXT(p);
+  else {
+    if(!(step = ParseExpr(p))) return NULL;
+    EXPECT(p,TK_RPAR);
+  }
+
+  if(!(ck = ParseChunkOrSStmt(p,1)))
+    return NULL;
+
+  ret = GRAB(NodeFor);
+  ret->base.type = ENT_FOR;
+  ret->base.dbg_start = dbg_start;
+  ret->base.dbg_end   = L(p)->pos;
+
+  ret->init = init;
+  ret->cond = cond;
+  ret->step = step;
+  ret->chunk= ck;
+
+  LexScpLeave(p);
+
+  return ret;
+}
+
+static Node* ParseContinue( Parser* p ) {
+  NodeContinue* c;
+  if(!CurLScp(p)->in_loop) {
+    ParserError(p,"cannot write continue statement in none-loop scope");
+    return NULL;
+  }
+  c = GRAB(NodeContinue);
+  c->base.type      = ENT_CONTINUE;
+  c->base.dbg_start = L(p)->pos;
+
+  NEXT(p); EXPECT(p,TK_SEMICOLON);
+  c->base.dbg_end   = L(p)->pos;
+  return (Node*)c;
+}
+
+static Node* ParseBreak( Parser* p ) {
+  NodeBreak* b;
+  if(!CurLScp(p)->in_loop) {
+    ParserError(p,"cannot write break statement in none-loop scope");
+    return NULL;
+  }
+
+  b = GRAB(NodeBreak);
+  b->base.type      = ENT_BREAK;
+  b->base.dbg_start = L(p)->pos;
+
+  NEXT(p); EXPECT(p,TK_SEMICOLON);
+
+  b->base.dbg_end   = L(p)->pos;
+  return (Node*)b;
+}
+
+static Node* ParseReturn( Parser* p ) {
+  NodeReturn* r;
+  Node*       rv;
+  FuncScp*    fscp = FScp(p);
+
+  assert(fscp);
+  NEXT(p); // skip return
+
+  if(LEX(p)->tk == TK_SEMICOLON) {
+    if(fscp->type->ret->tag != EPT_VOID) {
+      ParserError(p,"cannot return nothing in a function with return type not defined as void");
+      return NULL;
+    }
+  } else {
+    if(!(rv = ParseExpr(p)))
+      return NULL;
+    if(fscp->type-ret->tag == EPT_VOID) {
+      ParserError(p,"cannot return a value in function defined to have a none-void return type");
+      return NULL;
+    }
+  }
+
+  EXPECT(p,TK_SEMICOLON);
+  r = GRAB(NodeReturn);
+
+  r->base.type      = ENT_RETURN;
+  r->base.dbg_start = dbg_start;
+  r->base.dbg_end   = L(p)->pos;
+  r->expr           = rv;
+
+  return (Node*)r;
+}
 
 /** ----------------------------------------------------------------
  * ToJSON
