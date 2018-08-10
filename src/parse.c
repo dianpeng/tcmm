@@ -38,7 +38,7 @@ static void ParserError( Parser* p , const char* fmt , ... ) {
   va_list vl;
   va_start(vl,fmt);
   vsnprintf(buf,1024,fmt,vl);
-  p->err = ReportError("parser",L(p)->src,L(p)->pos,L(p)->nline,L(p)->nchar,buf);
+  p->err = ReportError(p->pool,"parser",L(p)->src,L(p)->pos,L(p)->nline,L(p)->nchar,buf);
 }
 
 static void ParserInit( Parser* p , LitPool* lpool , MPool* mpool , const char* src ) {
@@ -47,7 +47,7 @@ static void ParserInit( Parser* p , LitPool* lpool , MPool* mpool , const char* 
 	p->lp_cnt= 0;
   p->err   = NULL;
 
-  LexerInit(&(p->lexer),lpool,src);
+  LexerInit(&(p->lexer),lpool,mpool,src);
   LexerNext(&(p->lexer)); // fire the lexer
 }
 
@@ -92,6 +92,7 @@ static inline int _IsUnaryOp( Token tk ) {
 
 static Node* ParseStruLit( Parser* p ) {
   NodeStruLit* slit;
+  LitIdx name;
   size_t pos_start = L(p)->pos;
 
   assert( LEX(p)->tk == TK_STRUCT );
@@ -102,6 +103,7 @@ static Node* ParseStruLit( Parser* p ) {
     ParserError(p,"expect a ID to indicate type name");
     return NULL;
   }
+  name = LEX(p)->lit;
   NEXT(p); // skip the type name
   EXPECT(p,TK_LBRA); // expect a {
 
@@ -110,6 +112,7 @@ static Node* ParseStruLit( Parser* p ) {
   slit->base.type      = ENT_STRULIT;
   slit->base.dbg_start = pos_start;
 
+  slit->name   = name;
   slit->ctype  = NULL;
   slit->assign = NULL;
 
@@ -474,22 +477,76 @@ static void CodeChunkAddStmt( Parser* p , CodeChunk* ck , Node* stmt ) {
   ck->stmt[ck->sz++] = stmt;
 }
 
+static int ParseArr( Parser* p , const TypeInfo* mt , TypeInfo* o ) {
+  LitIdx len_idx;
+  TypeInfo tmp;
+
+  NEXT(p); // skip [
+  if(LEX(p)->tk != TK_LIT_INT) {
+    ParserError(p,"expect a int to be used as index of array");
+    return -1;
+  }
+
+  len_idx = LEX(p)->lit;
+
+  NEXT(p);
+  EXPECTR(p,TK_RSQR,return -1);
+
+  o->type          = ET_ARR;
+  o->extra.arr.len = LitPoolInt(p->lpool,len_idx);
+  o->extra.arr.t   = GRAB(TypeInfo);
+
+  if(o->extra.arr.len == 0) {
+    ParserError(p,"the size of the array must be larger than 0");
+    return -1;
+  }
+
+  if(LEX(p)->tk == TK_LSQR) {
+    if(ParseArr(p,mt,&tmp)) return -1;
+    *o->extra.arr.t  = tmp;
+  } else {
+    *o->extra.arr.t  = *mt;
+  }
+
+  return 0;
+}
+
+static int ParseVDecWithType( Parser* p , const TypeInfo* mt , TypeInfo* tinfo , LitIdx* ref ) {
+  if(LEX(p)->tk != TK_ID) {
+    ParserError(p,"expect a ID name after the type");
+    return -1;
+  }
+
+  *ref = LEX(p)->lit;
+  NEXT(p); // skip the name
+
+  if(LEX(p)->tk == TK_LSQR) {
+    if(ParseArr(p,mt,tinfo)) return -1;
+  } else {
+    *tinfo = *mt;
+  }
+
+  return 0;
+}
+
 static int ParseVDec( Parser* p , TypeInfo* tinfo , LitIdx* ref ) {
+  TypeInfo mt;
+
   switch(LEX(p)->tk) {
     case TK_INT:
-      tinfo->type = EPT_INT;
+      mt.type = EPT_INT;
       break;
     case TK_DBL:
-      tinfo->type = EPT_DBL;
+      mt.type = EPT_DBL;
       break;
     case TK_BOOL:
-      tinfo->type = EPT_BOOL;
+      mt.type = EPT_BOOL;
       break;
     case TK_CHAR:
-      tinfo->type = EPT_CHAR;
+      mt.type = EPT_CHAR;
       break;
     case TK_STR:
-      tinfo->type = ET_STR;
+      mt.type = ET_STR;
       break;
     case TK_STRUCT:
       {
@@ -498,8 +555,8 @@ static int ParseVDec( Parser* p , TypeInfo* tinfo , LitIdx* ref ) {
           ParserError(p,"expect a ID name after the struct");
           return -1;
         }
-        tinfo->type = ET_STRUCT;
-        tinfo->extra.name = LEX(p)->lit;
+        mt.type = ET_STRUCT;
+        mt.extra.name = LEX(p)->lit;
       }
       break;
     case TK_VOID:
@@ -512,41 +569,8 @@ static int ParseVDec( Parser* p , TypeInfo* tinfo , LitIdx* ref ) {
 
   NEXT(p); // skip the whole type name
 
-  if(LEX(p)->tk != TK_ID) {
-    ParserError(p,"expect a ID name after the type");
-    return -1;
-  }
-
-  *ref = LEX(p)->lit;
-  NEXT(p); // skip the name
-
-  // try to check if there's any trailing array specifier
-  if(LEX(p)->tk == TK_LSQR) {
-    size_t len;
-
-    // this is an array type since it has a array modifier
-    NEXT(p); // skip [
-    if(LEX(p)->tk != TK_LIT_INT) {
-      ParserError(p,"expect a literal integer serve as array length");
-      return -1;
-    }
-    len = (size_t)LitPoolInt(p->lpool,LEX(p)->lit);
-    if(len == 0) {
-      ParserError(p,"array length cannot be 0");
-      return -1;
-    }
-
-    tinfo->extra.arr.t   = tinfo->type;
-    tinfo->type          = ET_ARR;
-    tinfo->extra.arr.len = len;
-
-    NEXT(p);
-    EXPECTR(p,TK_RSQR,return -1);
-  }
-
-  return 0;
+  return ParseVDecWithType(p,&mt,tinfo,ref);
 }
-
 
 // Parsing local variable definition or declaration.
 // lvar := def | dec
@@ -995,52 +1019,42 @@ static Node* ParseGlbVar( Parser* p , size_t dbg_start , LitIdx name , const Typ
   return (Node*)ret;
 }
 
-static Node* ParseGlbVarOrFunction( Parser* p ) {
-  size_t      dbg_start = L(p)->pos;
-  LitIdx      name;
-  TypeInfo    t;
-
-  if(ParseVDec(p,&t,&name)) return NULL;
-
+static Node* ParseGlbVarOrFunctionWithType( Parser* p , size_t dbg_start ,
+                                                        LitIdx name,
+                                                        const TypeInfo* type ) {
   if(LEX(p)->tk == TK_ASSIGN) {
-    return ParseGlbVar(p,dbg_start,name,&t);
+    return ParseGlbVar(p,dbg_start,name,type);
   } else if(LEX(p)->tk == TK_LPAR) {
     // check whether it can be a function or not
-    if(t.type == ET_ARR) {
+    if(type->type == ET_ARR) {
       ParserError(p,"doesn't look like a function definition , neither looks like a global variable");
       return NULL;
     }
-    return ParseFunc(p,dbg_start,name,&t);
+    return ParseFunc(p,dbg_start,name,type);
   }
-
   ParserError(p,"unknown global statement, you can define struct type, global variables or function "
                 "in global scope");
   return NULL;
 }
 
-static Node* ParseStruct( Parser* p ) {
-  NodeStructDef* def = GRAB(NodeStructDef);
+static Node* ParseGlbVarOrFunction( Parser* p ) {
+  size_t      dbg_start = L(p)->pos;
+  LitIdx      name;
+  TypeInfo    t;
+  if(ParseVDec(p,&t,&name))
+    return NULL;
+  return ParseGlbVarOrFunctionWithType(p,dbg_start,name,&t);
+}
 
+static Node* ParseStruct( Parser* p , LitIdx name ) {
+  NodeStructDef* def = GRAB(NodeStructDef);
   def->base.type      = ENT_STRUCT_DEF;
   def->base.dbg_start = L(p)->pos;
 
   def->field = NULL;
   def->sz    = 0;
   def->cap   = 0;
-
-  NEXT(p); // skip "struct"
-  if(LEX(p)->tk != TK_ID) {
-    ParserError(p,"expect a id after the struct");
-    return NULL;
-  }
-
-  def->name = LEX(p)->lit;
-  NEXT(p); // skip the id
-
-  if(LEX(p)->tk != TK_LBRA) {
-    ParserError(p,"expect a \"{\" to start the struct body");
-    return NULL;
-  }
+  def->name  = name;
   NEXT(p);
   while(LEX(p)->tk != TK_RBRA) {
     NodeStructDefField* field;
@@ -1050,9 +1064,7 @@ static Node* ParseStruct( Parser* p ) {
       def->field  = MPoolRealloc(p->pool,def->field,sizeof(NodeStructDefField)*def->sz,
                                                     sizeof(NodeStructDefField)*ncap);
     }
-
     field = def->field + def->sz++;
-
     if(ParseVDec(p,&(field->tinfo),&(field->name)))
       return NULL;
 
@@ -1069,6 +1081,37 @@ static Node* ParseStruct( Parser* p ) {
 
   def->base.dbg_end = L(p)->pos;
   return (Node*)def;
+}
+
+static Node* ParseStructOrGlbVar( Parser* p ) {
+  size_t dbg_start = L(p)->pos;
+  LitIdx name;
+  NEXT(p);
+  if(LEX(p)->tk != TK_ID) {
+    ParserError(p,"expect an id after struct");
+    return NULL;
+  }
+  name = LEX(p)->lit;
+  NEXT(p);
+
+  if(LEX(p)->tk == TK_LBRA) {
+    return ParseStruct(p,name);
+  } else if(LEX(p)->tk == TK_ID) {
+    // try to parse it as a global variable assignment
+    TypeInfo mt;
+    TypeInfo ft;
+    LitIdx   id;
+
+    mt.type       = ET_STRUCT;
+    mt.extra.name = name;
+
+    if(ParseVDecWithType(p,&mt,&ft,&id))
+      return NULL;
+    return ParseGlbVarOrFunctionWithType(p,dbg_start,id,&ft);
+  }
+
+  ParserError(p,"unknown global scope statement");
+  return NULL;
 }
 
 static NodeFile* ParseFile( Parser* p ) {
@@ -1093,7 +1136,7 @@ static NodeFile* ParseFile( Parser* p ) {
           return NULL;
         break;
       case TK_STRUCT:
-        if(!(stmt=ParseStruct(p)))
+        if(!(stmt=ParseStructOrGlbVar(p)))
           return NULL;
         break;
       case TK_EOF:
@@ -1207,9 +1250,9 @@ static void _PrintEscStr( FILE* f , const char* str ) {
 
 static void _PrintPrimType( FILE* f , EType t ) {
   switch(t) {
-    case ET_STR: fprintf(f,"str"); break;
-    case EPT_INT: fprintf(f,"int"); break;
-    case EPT_DBL: fprintf(f,"dbl"); break;
+    case ET_STR  : fprintf(f,"str"); break;
+    case EPT_INT : fprintf(f,"int"); break;
+    case EPT_DBL : fprintf(f,"dbl"); break;
     case EPT_CHAR: fprintf(f,"char"); break;
     case EPT_BOOL: fprintf(f,"bool"); break;
     case EPT_VOID: fprintf(f,"void"); break;
@@ -1220,8 +1263,8 @@ static void _PrintPrimType( FILE* f , EType t ) {
 static void _PrintRawType( Parser* p , FILE* f , const TypeInfo* t ) {
   switch(t->type) {
     case ET_ARR:
-      _PrintPrimType(f,t->extra.arr.t);
-      fprintf(f,"[%d]",(int)t->extra.arr.len);
+      fprintf(f,"[%d]",t->extra.arr.len);
+      _PrintRawType(p,f,t->extra.arr.t);
       break;
     case ET_STRUCT:
       fprintf(f,"struct %s",LitPoolId(p->lpool,t->extra.name));
@@ -1504,3 +1547,11 @@ Node* ParseExpression( LitPool* lpool , MPool* pool , const char* source ) {
   return ret;
 }
 #endif // CONFIG_UNITTEST
+
+
+#undef L
+#undef LEX
+#undef NEXT
+#undef EXPECT
+#undef EXPECTR
+#undef GRAB

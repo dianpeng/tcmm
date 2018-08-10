@@ -305,10 +305,17 @@ int StrToDbl( const char* src , double* output ) {
 #include <stdio.h>
 
 PAPI
-const char* ReportError( const char* context , const char* source , size_t pos ,
-                                                                    size_t line ,
-                                                                    size_t nchar ,
-                                                                    const char* msg ) {
+const char* ReportError( MPool* pool , const char* context , const char* source ,
+                                                             size_t pos  ,
+                                                             size_t line ,
+                                                             size_t nchar ,
+                                                             const char* msg ) {
   fprintf(stderr,"Failed[%s]:%s\n",context,msg);
-  return strdup(msg);
+  return MPoolStrDup(pool,msg);
+}
+
+PAPI
+const char* ReportErrorWithRange( MPool* , const char* ctx , const char* , size_t , size_t , const char* msg ) {
+  fprintf(stderr,"Failed[%s]:%s\n",ctx,msg);
+  return MPoolStrDup(pool,msg);
 }

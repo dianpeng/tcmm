@@ -92,12 +92,23 @@ PAPI int         LitPoolBool( LitPool* , LitIdx );
 PAPI int StrToI32( const char* , int , int32_t* );
 PAPI int StrToDbl( const char* , double* );
 
-PAPI const char* ReportError( const char* ,
+/* ----------------------------------------------------
+ * Report Error
+ * ---------------------------------------------------*/
+PAPI const char* ReportError( MPool* ,
+                              const char* ,
                               const char* ,
                               size_t ,
                               size_t ,
                               size_t ,
                               const char* );
+
+PAPI const char* ReportErrorWithRange( MPool* ,
+                                       const char* ,
+                                       const char* ,
+                                       size_t ,
+                                       size_t ,
+                                       const char* );
 
 #define ALIGN(XX,A) (((XX) + ((A)-1)) & ~((A)-1))
 
@@ -186,9 +197,10 @@ typedef struct _Lexer {
   size_t      nchar;
   LitPool*    lpool;
   const char*   err;
+  MPool*       pool;
 } Lexer;
 
-PAPI void LexerInit( Lexer* , LitPool* , const char* );
+PAPI void LexerInit( Lexer* , LitPool* , MPool* , const char* );
 PAPI const Lexeme* LexerNext( Lexer* );
 PAPI void LexerDelete( Lexer* );
 
@@ -279,6 +291,8 @@ typedef struct _TypeSys {
   LitPool*      lpool;
 } TypeSys;
 
+PAPI const char* ETypeGetStr( EType );
+
 PAPI void TypeSysInit( TypeSys* , LitPool* , MPool* );
 
 PAPI void TypeSysDelete( TypeSys* );
@@ -346,7 +360,12 @@ typedef enum _ENodeType {
   ENT_FUNC,
   ENT_STRUCT_DEF,
   ENT_GLOBAL,
-  ENT_FILE
+  ENT_FILE,
+  // cast node , added on demand by semantic check,
+  ENT_INT_TO_DBL,
+  ENT_CHAR_TO_INT,
+  ENT_BOOL_TO_INT,
+  ENT_TO_BOOL
 } ENodeType;
 
 typedef struct _Node {
@@ -363,8 +382,8 @@ typedef struct _TypeInfo {
   union {
     LitIdx name;
     struct {
-      size_t len;
-      EType    t;
+      int             len; // length of the array
+      struct _TypeInfo* t; // recursively defined type reference back
     } arr;
   } extra;
 } TypeInfo;
@@ -392,7 +411,6 @@ typedef struct _NodeLit {
 typedef struct _NodeId {
   Node         base;
   LitIdx       name;
-  TypeInfo    tinfo;
   IdRef         ref;
   const Type* ctype;
 } NodeId;
@@ -406,8 +424,9 @@ typedef struct _NodeStruLitAssign {
 
 typedef struct _NodeStruLit {
   Node base;
-  NodeStruLitAssign* assign;  // all the field assignment
-  const StructType* ctype;    // the type of the structure literals
+  NodeStruLitAssign* assign;
+  LitIdx               name;
+  const StructType*   ctype;
 } NodeStruLit;
 
 typedef struct _NodePrefixCompCall {
@@ -527,21 +546,22 @@ typedef struct _NodeReturn {
 typedef struct _NodeFuncArgDef {
   TypeInfo tinfo;
   LitIdx   name ;
+
+  const FuncTypeArg* ctype;
 } NodeFuncArgDef;
 
 typedef struct _NodeFunc {
-  Node            base;
+  Node             base;
   CodeChunk*      chunk;
   NodeFuncArgDef*   arg;
   size_t         arg_sz;
   size_t        arg_cap;
   TypeInfo        rtype;
-
   /** information **/
-  size_t          max_vsz;  // maximum variable size, used to decide stack reservation
+  size_t        max_vsz;  // maximum variable size, used to decide stack reservation
 
   /** semantic **/
-  const Type*    ctype;
+  const FuncType*  ctype;
 } NodeFunc;
 
 typedef struct _NodeGlobal {
@@ -555,6 +575,7 @@ typedef struct _NodeGlobal {
 typedef struct _NodeStructDefField {
   LitIdx    name;
   TypeInfo tinfo;
+  const FieldType* ctype;
 } NodeStructDefField;
 
 typedef struct _NodeStructDef {
@@ -563,12 +584,36 @@ typedef struct _NodeStructDef {
   NodeStructDefField* field;
   size_t                 sz;
   size_t                cap;
+  // used during semantic check
+  StructType*         ctype;
+  const Type*     ret_ctype;
 } NodeStructDef;
 
 typedef struct _NodeFile {
   Node            base;
   CodeChunk*     chunk;
 } NodeFile;
+
+// node added by semantic checker
+typedef struct _NodeIntToDbl {
+  Node  base;
+  Node* expr;
+} NodeIntToDbl;
+
+typedef struct _NodeCharToInt {
+  Node  base;
+  Node* expr;
+} NodeCharToInt;
+
+typedef struct _NodeBoolToInt {
+  Node  base;
+  Node* expr;
+} NodeBoolToInt;
+
+typedef struct _NodeToBool {
+  Node  base;
+  Node* expr;
+} NodeToBool;
 
 PAPI NodeFile* Parse     ( LitPool* , MPool* , const char* );
 PAPI void      NodeToJSON( LitPool* , MPool* , FILE* , const Node* );

@@ -240,4 +240,20 @@ int TypeSysCanCast( TypeSys* sys , const Type* from , const Type* to ) {
   return to->tag == EPT_BOOL;
 }
 
+PAPI
+const char* ETypeGetStr( EType t ) {
+  switch(t) {
+    case EPT_INT: return "int";
+    case EPT_DBL: return "double";
+    case EPT_CHAR: return "char";
+    case EPT_BOOL: return "bool";
+    case EPT_VOID: return "void";
+    case ET_STR : return "str";
+    case ET_STRUCT: return "struct";
+    case ET_ARR: return "array";
+    case ET_FUNC: return "func";
+    default: assert(0); return "";
+  }
+}
+
 #undef LINK_TYPE // LINK_TYPE

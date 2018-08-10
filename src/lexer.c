@@ -17,11 +17,12 @@ const char* TokenGetStr( Token tk ) {
 }
 
 PAPI
-void LexerInit( Lexer* l , LitPool* pool , const char* source ) {
+void LexerInit( Lexer* l , LitPool* pool , MPool* mpool , const char* source ) {
   l->src = source;
   l->pos = 0;
   l->nline = 1;
   l->nchar = 1;
+  l->pool  = mpool;
   l->lpool = pool;
   l->lexeme.tk = TK_ERROR;
   l->err   = NULL;
@@ -40,7 +41,7 @@ const Lexeme* LexerError( Lexer* l , const char* fmt , ... ) {
   char   msg[1024];
   va_start(vl,fmt);
   vsnprintf(msg,1024,fmt,vl);
-  l->err = ReportError("lexer",l->src,l->pos,l->nline,l->nchar,msg);
+  l->err = ReportError(l->pool,"lexer",l->src,l->pos,l->nline,l->nchar,msg);
   l->lexeme.tk = TK_ERROR;
   l->lexeme.tk_sz = 0;
   return &(l->lexeme);
@@ -426,7 +427,11 @@ const Lexeme* LexerNext( Lexer* l ) {
   }
 }
 
-PAPI
-void LexerDelete( Lexer* l ) {
-  free((void*)l->err);
+PAPI void LexerDelete( Lexer* l ) {
+  l->src = NULL;
+  l->pos = 0;
+  l->nline = l->nchar = 0;
+  l->lpool = NULL;
+  l->err   = NULL;
+  l->pool  = NULL;
 }

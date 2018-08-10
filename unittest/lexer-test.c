@@ -40,7 +40,7 @@ TEST(Lexer,TkOp) {
     LitPool lpool;
 
     LitPoolInit(&lpool,mpool);
-    LexerInit  (&l,&lpool,str);
+    LexerInit  (&l,&lpool,mpool,str);
 
     for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
       ASSERT_EQ(tk[i],LexerNext(&l)->tk);
@@ -70,7 +70,7 @@ TEST(Lexer,TkOp) {
     LitPool lpool;
 
     LitPoolInit(&lpool,mpool);
-    LexerInit  (&l,&lpool,str);
+    LexerInit  (&l,&lpool,mpool,str);
 
     for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
       ASSERT_EQ(tk[i],LexerNext(&l)->tk);
@@ -108,7 +108,7 @@ TEST(Lexer,NumNormal) {
   LitPool lpool;
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   for( size_t i = 0 ; i < array_size(r) ; ++i ) {
     ASSERT_EQ(r[i].tk,LexerNext(&l)->tk);
@@ -133,7 +133,7 @@ TEST(Lexer,Int32Overflow) {
   LitPool lpool;
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
   LexerNext(&l);
   ASSERT_EQ(TK_ERROR,l.lexeme.tk);
 
@@ -147,7 +147,7 @@ TEST(Lexer,Boolean) {
   Lexer l;
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   LexerNext(&l);
   ASSERT_EQ(TK_LIT_TRUE,l.lexeme.tk);
@@ -175,7 +175,7 @@ TEST(Lexer,Char) {
   };
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
     ASSERT_EQ(res[i].tk,LexerNext(&l)->tk);
@@ -196,7 +196,7 @@ TEST(Lexer,EmptyChar) {
   Lexer   l;
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   ASSERT_EQ(TK_ERROR,LexerNext(&l)->tk);
 
@@ -220,7 +220,7 @@ TEST(Lexer,Str) {
   };
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
     ASSERT_EQ(res[i].tk,LexerNext(&l)->tk);
@@ -258,7 +258,7 @@ TEST(Lexer,Keyword) {
   };
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   for( size_t i = 0 ; i < array_size(tk) ; ++i ) {
     LexerNext(&l);
@@ -288,7 +288,7 @@ TEST(Lexer,Id) {
   };
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   for( size_t i = 0 ; i < array_size(res) ; ++i ) {
     const Lit* lit;
@@ -312,7 +312,7 @@ TEST(Lexer,Comment) {
   Lexer   l;
 
   LitPoolInit(&lpool,mpool);
-  LexerInit  (&l,&lpool,str);
+  LexerInit  (&l,&lpool,mpool,str);
 
   LexerNext(&l);
   ASSERT_EQ(TK_ID,l.lexeme.tk);
