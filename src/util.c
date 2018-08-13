@@ -315,7 +315,10 @@ const char* ReportError( MPool* pool , const char* context , const char* source 
 }
 
 PAPI
-const char* ReportErrorWithRange( MPool* , const char* ctx , const char* , size_t , size_t , const char* msg ) {
+const char* ReportErrorWithRange( MPool* pool , const char* ctx , const char* src ,
+                                                                  size_t      beg ,
+                                                                  size_t      end ,
+                                                                  const char* msg ) {
   fprintf(stderr,"Failed[%s]:%s\n",ctx,msg);
   return MPoolStrDup(pool,msg);
 }

@@ -332,10 +332,6 @@ void TypeSysFuncSetRet( TypeSys* , FuncType* , const Type* );
 PAPI
 const FuncTypeArg* TypeSysFuncAddArg( TypeSys* , FuncType* , const Type* , LitIdx );
 
-// type conversion
-PAPI
-int TypeSysCanCast( TypeSys* , const Type* , const Type* );
-
 /* -------------------------------------------------------
  * Parser
  * ------------------------------------------------------*/
@@ -556,7 +552,9 @@ typedef struct _NodeFunc {
   NodeFuncArgDef*   arg;
   size_t         arg_sz;
   size_t        arg_cap;
+  LitIdx           name;
   TypeInfo        rtype;
+  const Type*     ret_ctype;
   /** information **/
   size_t        max_vsz;  // maximum variable size, used to decide stack reservation
 
@@ -586,7 +584,6 @@ typedef struct _NodeStructDef {
   size_t                cap;
   // used during semantic check
   StructType*         ctype;
-  const Type*     ret_ctype;
 } NodeStructDef;
 
 typedef struct _NodeFile {

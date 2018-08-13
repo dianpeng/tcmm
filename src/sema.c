@@ -1,4 +1,7 @@
 #include "tcmm.h"
+
+#include <stdio.h>
+#include <stdarg.h>
 #include <assert.h>
 
 /* -------------------------------------------------------
@@ -164,8 +167,8 @@ typedef struct _FuncScp {
 
 typedef struct _LexScp {
   Scp      base;
-  FuncScp* fscp;        // top level function scope , no closure support so relative simple
-  size_t   vsz;         // all variable accumulated size that is nested up to now
+  FuncScp* fscp;
+  size_t   vsz;
 } LexScp;
 
 typedef struct _SemaCheck {
@@ -315,7 +318,7 @@ static inline void SemaCheckError( SemaCheck* p , Node* n , const char* fmt , ..
   char buf[1024];
   va_list vl;
   va_start(vl,fmt);
-  vnsprintf(buf,1024,fmt,vl);
+  vsnprintf(buf,1024,fmt,vl);
   p->err = ReportErrorWithRange(p->pool,"semantic",p->src,n->dbg_start,n->dbg_end,buf);
 }
 
@@ -330,24 +333,24 @@ static inline void SemaCheckError( SemaCheck* p , Node* n , const char* fmt , ..
  * --------------------------------------------------*/
 
 static const Type* SemaCheckGetRawType( SemaCheck* p , EType t ) {
-  switch(tinfo->type) {
+  switch(t) {
     case EPT_INT: return (const Type*)(TypeSysGetInt(p->tsys));
     case EPT_DBL: return (const Type*)(TypeSysGetDbl(p->tsys));
     case EPT_CHAR:return (const Type*)(TypeSysGetChar(p->tsys));
     case EPT_BOOL:return (const Type*)(TypeSysGetBool(p->tsys));
-    case ET_VOID: return (const Type*)(TypeSysGetVoid(p->tsys));
+    case EPT_VOID:return (const Type*)(TypeSysGetVoid(p->tsys));
     case ET_STR:  return (const Type*)(TypeSysGetStr(p->tsys));
     default: assert(0); return NULL;
   }
 }
 
 // NOTES: for array definition, it has its own unique type as well however it is
-//        not registered during the _Chk1 phase but register on demand. So when
+//        not registered during the _Check1 phase but register on demand. So when
 //        we find it is an array type, we should try to get it from type system,
 //        but if it failed, we should register it back to type system , ie an array
 //        type will not lead to failure of type resolution
 static const Type* SemaCheckGetType( SemaCheck* p , const TypeInfo* tinfo ) {
-  switch(tinfo) {
+  switch(tinfo->type) {
     case ET_STRUCT: return (const Type*)(TypeSysGetStruct(p->tsys,tinfo->extra.name));
     case ET_FUNC:   return (const Type*)(TypeSysGetFunc  (p->tsys,tinfo->extra.name));
     case ET_ARR:
@@ -364,6 +367,7 @@ static const Type* SemaCheckGetType( SemaCheck* p , const TypeInfo* tinfo ) {
       }
     default:
       return SemaCheckGetRawType(p,tinfo->type);
+  }
 }
 
 static const char* SemaCheckGetTypeInfoStr( SemaCheck* p , const TypeInfo* tinfo ) {
@@ -371,26 +375,27 @@ static const char* SemaCheckGetTypeInfoStr( SemaCheck* p , const TypeInfo* tinfo
   return ETypeGetStr(tinfo->type);
 }
 
-// 1. Collect all the global scope type definition , including all the type definition as :
+// 1. Collect all the global scope type definition , including all the type
+//    definition as :
+//
 //    1) Struct
 //    2) Function
-static int _Chk1( SemaCheck* p , NodeFile* n ) {
+static int _Check1( SemaCheck* p , NodeFile* n ) {
   // pass 1 , register function type and struct type , but not going into
-  // each field of the struct type this make fowrad reference possible
+  //          each field of the struct type this make fowrad reference possible
   for( size_t i = 0 ; i < n->chunk->sz ; ++i ) {
     Node* stmt = n->chunk->stmt[i];
     switch(stmt->type) {
       case ENT_STRUCT_DEF:
         {
           NodeStructDef* sdef = (NodeStructDef*)(stmt);
-          StructType*      st = TypeSysGetStruct(p->tsys,sdef->name);
-          sdef->ctype         = st;
+          sdef->ctype         = TypeSysSetStruct(p->tsys,sdef->name);
         }
         break;
       case ENT_FUNC:
         {
           NodeFunc*      fdef = (NodeFunc*)(stmt);
-          FuncType*        ft = TypeSysGetFuncType(p->tsys,fdef->name);
+          FuncType*        ft = TypeSysSetFunc(p->tsys,fdef->name);
 
           for( size_t i = 0 ; i < fdef->arg_sz ; ++i ) {
             NodeFuncArgDef* adef = fdef->arg + i;
@@ -417,9 +422,12 @@ static int _Chk1( SemaCheck* p , NodeFile* n ) {
               return -1;
             }
 
-            adef->ret_ctype = TypeSysFuncSetRet(p->tsys,ft,rt);
+            fdef->ret_ctype = rt;
+            TypeSysFuncSetRet(p->tsys,ft,rt);
           }
         }
+        break;
+      default:
         break;
     }
   }
@@ -435,7 +443,7 @@ static int _Chk1( SemaCheck* p , NodeFile* n ) {
         const Type*             t = SemaCheckGetType(p,&(field->tinfo));
         if(!t) {
           SemaCheckError(p,(Node*)n, "cannot find type %s for struct %s's field %s",
-                                     SemaCheckGetTypeInfoStr(p,&(adef->tinfo)),
+                                     SemaCheckGetTypeInfoStr(p,&(field->tinfo)),
                                      LitPoolId(p->lpool,sdef->name),
                                      LitPoolId(p->lpool,field->name));
           return -1;
@@ -458,9 +466,10 @@ static const Type* SemaCheckBinary ( SemaCheck* , NodeBinary* );
 static const Type* SemaCheckTernary( SemaCheck* , NodeTernary* );
 static const Type* SemaCheckExpr   ( SemaCheck* , Node* );
 
-// implicit type case or type resolution , work directly on AST and may add new AST node
-// to make the AST becomes strict AST which means operands matched the operators requirements
-// strictly. The implicit promotion rule will be applied and it is listed as following :
+// Implicit type case or type resolution , work directly on AST and may add new AST
+// node to make the AST becomes strict AST which means operands matched the operators
+// requirements strictly. The implicit promotion rule will be applied and it is listed
+// as following :
 //
 // 1. int -> dbl
 // 2. char-> int
@@ -470,40 +479,41 @@ static const Type* SemaCheckExpr   ( SemaCheck* , Node* );
 //
 // 1. any -> bool
 
-static int SemaCheckTypeCast1( SemaCheck* p , const Type* lhs , const Type* rhs , Node** rop ) {
-  switch(lhs->type) {
-    case ET_DBL:
-      if(rhs->type == ET_INT) {
+static int SemaCheckTypeCast1( SemaCheck* p , const Type* lhs , const Type* rhs ,
+                                                                Node**      rop ) {
+  switch(lhs->tag) {
+    case EPT_DBL:
+      if(rhs->tag == EPT_INT) {
         Node* old = *rop;
         NodeIntToDbl* cast   = MPoolGrab(p->pool,sizeof(*cast));
 
         cast->base.type      = ENT_INT_TO_DBL;
-        cast->base.dbg_start = old->base.dbg_start;
-        cast->base.dbg_end   = old->base.dbg_end;
+        cast->base.dbg_start = old->dbg_start;
+        cast->base.dbg_end   = old->dbg_end;
         cast->expr           = old;
         *rop = (Node*)cast;
         return 0;
       }
       break;
-    case ET_INT:
-      if(rhs->type == ET_CHAR) {
+    case EPT_INT:
+      if(rhs->tag == EPT_CHAR) {
         Node* old = *rop;
         NodeCharToInt* cast = MPoolGrab(p->pool,sizeof(*cast));
 
         cast->base.type     = ENT_CHAR_TO_INT;
-        cast->base.dbg_start= old->base.dbg_start;
-        cast->base.dbg_end  = old->base.dbg_end;
+        cast->base.dbg_start= old->dbg_start;
+        cast->base.dbg_end  = old->dbg_end;
         cast->expr          = old;
 
         *rop = (Node*)cast;
         return 0;
-      } else if(rhs->type == ET_BOOL) {
+      } else if(rhs->tag == EPT_BOOL) {
         Node* old = *rop;
         NodeBoolToInt* cast = MPoolGrab(p->pool,sizeof(*cast));
 
         cast->base.type     = ENT_BOOL_TO_INT;
-        cast->base.dbg_start= old->base.dbg_start;
-        cast->base.dbg_end  = old->base.dbg_end;
+        cast->base.dbg_start= old->dbg_start;
+        cast->base.dbg_end  = old->dbg_end;
         cast->expr          = old;
         *rop = (Node*)cast;
       }
@@ -512,7 +522,7 @@ static int SemaCheckTypeCast1( SemaCheck* p , const Type* lhs , const Type* rhs 
       break;
   }
 
-  return lhs->type == rhs->type ? 0 : -1;
+  return lhs->tag == rhs->tag ? 0 : -1;
 }
 
 static const Type* SemaCheckLit( SemaCheck* p , NodeLit* e ) {
@@ -541,22 +551,21 @@ static const Type* SemaCheckLit( SemaCheck* p , NodeLit* e ) {
   return e->ctype;
 }
 
-static int SemaCheckId( SemaCheck* p , NodeId* e ) {
+static const Type* SemaCheckId( SemaCheck* p , NodeId* e ) {
   const Sym* sym;
 
   if(!(sym = FindSym(p,e->name))) {
     SemaCheckError(p,(Node*)e,"cannot find variable with name %s",LitPoolId(p->lpool,e->name));
-    return -1;
+    return NULL;
   }
 
   e->ref   = sym->ref;
   e->ctype = sym->info.ctype;
-
   return e->ctype;
 }
 
 static const Type* SemaCheckStruLit( SemaCheck* p , NodeStruLit* e ) {
-  const StructType* st = TypeSysFind(p->tsys,e->name);
+  const StructType* st = TypeSysGetStruct(p->tsys,e->name);
   if(!st) {
     SemaCheckError(p,(Node*)e,"undefined type struct %s",LitPoolId(p->lpool,e->name));
     return NULL;
@@ -565,7 +574,7 @@ static const Type* SemaCheckStruLit( SemaCheck* p , NodeStruLit* e ) {
 
   // go through each field of this assignment
   for( NodeStruLitAssign* n = e->assign ; n ; n = n->next ) {
-    const FieldType* ft = TypeSysFind(p->tsys,st,n->name);
+    const FieldType* ft = TypeSysGetStructField(p->tsys,st,n->name);
     const Type*     lhs;
     const Type*     rhs;
 
@@ -575,27 +584,16 @@ static const Type* SemaCheckStruLit( SemaCheck* p , NodeStruLit* e ) {
       return NULL;
     }
 
-    lhs = ft->ctype;
-
+    lhs = ft->t;
     if(!(rhs = SemaCheckExpr(p,n->value)))
       return NULL;
 
     if(SemaCheckTypeCast1(p,lhs,rhs,&(n->value))) {
-      SemaCheckError(p,(Node*)e,"field %s in struct %s type mismatch with its rhs",LitPoolId(p->lpool,n->name),
-                                                                                   LitPoolId(p->lpool,e->name));
+      SemaCheckError(p,(Node*)e,"field %s in struct %s type mismatch with its rhs",
+                                LitPoolId(p->lpool,n->name),
+                                LitPoolId(p->lpool,e->name));
       return NULL;
     }
   }
-  return e->ctype;
+  return (const Type*)e->ctype;
 }
-
-
-
-
-
-
-
-
-
-
-

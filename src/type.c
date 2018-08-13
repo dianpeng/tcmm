@@ -199,47 +199,6 @@ TypeSysFuncAddArg( TypeSys* sys , FuncType* ft , const Type* t , LitIdx aname ) 
   return ft->arg + (ft->arg_size-1);
 }
 
-/**
- * This function implements the implicit cast strategy
- *
- * char --> int
- * int  --> double
- * bool --> int
- * bool --> char
- *
- * ANY  --> bool
- */
-PAPI
-int TypeSysCanCast( TypeSys* sys , const Type* from , const Type* to ) {
-  (void)sys;
-  switch(from->tag) {
-    case EPT_CHAR:
-      return to->tag == EPT_INT;
-    case EPT_INT :
-      return to->tag == EPT_DBL;
-    case EPT_BOOL:
-      return to->tag == EPT_INT || to->tag == EPT_CHAR;
-    case ET_ARR:
-      if(to->tag == ET_ARR) {
-        const ArrType* lhs_at = (const ArrType*)from;
-        const ArrType* rhs_at = (const ArrType*)to;
-        if(lhs_at->len == rhs_at->len) {
-          return TypeSysCanCast(sys,lhs_at->type,rhs_at->type);
-        }
-      }
-      return 0;
-    default:
-      break;
-  }
-
-  // same type can be casted
-  if(from->tag == to->tag)
-    return 1;
-
-  // any type can be casted to bool
-  return to->tag == EPT_BOOL;
-}
-
 PAPI
 const char* ETypeGetStr( EType t ) {
   switch(t) {

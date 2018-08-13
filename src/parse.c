@@ -980,6 +980,7 @@ static Node* ParseFunc( Parser* p , size_t dbg_start , LitIdx fname , const Type
     fnode->base.type      = ENT_FUNC;
     fnode->base.dbg_start = dbg_start;
     fnode->ctype          = NULL;
+    fnode->name           = fname;
 
     fnode->arg            = NULL;
     fnode->arg_sz         = 0;
