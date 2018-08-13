@@ -120,6 +120,8 @@ StructType* TypeSysSetStruct( TypeSys* sys , LitIdx idx ) {
     st->fsize    = 0;
     st->fcap     = 0;
     st->name     = idx;
+
+    LINK_TYPE(sys,st);
     return st;
   }
 }
@@ -129,7 +131,7 @@ const FieldType* TypeSysAddStructField( TypeSys* sys , StructType* st , LitIdx i
   FieldType* ft;
   if(st->fcap == st->fsize) {
     size_t ncap= st->fcap ? st->fcap * 2 : 8;
-    st->fstart = MPoolRealloc(sys->pool,st->fstart,st->fsize*sizeof(FieldType),ncap);
+    st->fstart = MPoolRealloc(sys->pool,st->fstart,st->fsize*sizeof(FieldType),ncap*sizeof(FieldType));
     st->fcap   = ncap;
   }
 

@@ -27,8 +27,7 @@ TEST(Parser,Stmt) {
   MPool   mpool;
   LitPool lpool;
   NodeFile*   n;
-  const char* src = "struct XXX a[10][20] = 10; \n"
-                    "int foo(int a,int b) { return bar; }\n";
+  const char* src = "int x = a.b.c[1](x);";
 
   MPoolInit(&mpool,8,32);
   LitPoolInit(&lpool,&mpool);

@@ -64,18 +64,6 @@ static Node* ParseBinary ( Parser* );
 static Node* ParseUnary  ( Parser* );
 static Node* ParsePrefix ( Parser* );
 static Node* ParsePrimary( Parser* );
-static Node* ParseStruLit( Parser* );
-
-static NodePrefixComp* NodePrefixAddComp( NodePrefix* p , MPool* pool ) {
-  if(p->comp_sz == p->comp_cap) {
-    size_t ncap = p->comp_cap ? p->comp_cap * 2 : 4;
-    p->comp = MPoolRealloc(pool,p->comp,sizeof(NodePrefixComp)*p->comp_cap,ncap);
-    p->comp_cap = ncap;
-  }
-
-  return p->comp + p->comp_sz++;
-}
-
 
 static inline void NodeDbg0( Parser* p , Node* n ) {
   n->dbg_start = L(p)->pos - LEX(p)->tk_sz;
@@ -90,22 +78,11 @@ static inline int _IsUnaryOp( Token tk ) {
   return tk == TK_NOT || tk == TK_SUB;
 }
 
-static Node* ParseStruLit( Parser* p ) {
+static Node* ParseStruLit( Parser* p , LitIdx name ) {
   NodeStruLit* slit;
-  LitIdx name;
   size_t pos_start = L(p)->pos;
 
-  assert( LEX(p)->tk == TK_STRUCT );
-  NEXT(p);
-
-  // get the type object w.r.t the type name
-  if(LEX(p)->tk != TK_ID) {
-    ParserError(p,"expect a ID to indicate type name");
-    return NULL;
-  }
-  name = LEX(p)->lit;
-  NEXT(p); // skip the type name
-  EXPECT(p,TK_LBRA); // expect a {
+  NEXT(p); // skip {
 
   // create the NodeStruLit object
   slit = GRAB(NodeStruLit);
@@ -207,24 +184,22 @@ static Node* ParsePrimary( Parser* p ) {
         return (Node*)n;
       }
 
-    case TK_STRUCT:
-      return ParseStruLit(p);
-
     default:
-      ParserError(p,"expect a valid primary expression , eg literal , subexpression or struct literal");
+      ParserError(p,"expect a valid primary expression , eg literal or subexpression");
       return NULL;
   }
 }
 
-static NodePrefixComp* ParseCall( Parser* p , NodePrefix* pp ) {
+static Node* ParseCall( Parser* p , Node* pp ) {
   size_t dbg_start = L(p)->pos;
 
-  NodePrefixComp* c = NodePrefixAddComp(pp,(p->pool));
-  c->comp_type = EEPCT_CALL;
-  c->c.call    = GRAB(NodePrefixCompCall);
-  c->c.call->sz= 0;
-
+  NodeCall* c = GRAB(NodeCall);
+  c->lhs            = pp;
+  c->base.dbg_start = dbg_start;
+  c->base.type      = ENT_CALL;
+  c->arg.sz         = 0;
   NEXT(p); // skip (
+
   if(LEX(p)->tk == TK_RPAR) {
     NEXT(p);
   } else {
@@ -238,7 +213,7 @@ static NodePrefixComp* ParseCall( Parser* p , NodePrefix* pp ) {
       }
 
       if(!(e = ParseExpr(p))) return NULL;
-      c->c.call->args[pos++] = e;
+      c->arg.args[pos++] = e;
 
       switch(LEX(p)->tk) {
         case TK_COMMA:
@@ -246,6 +221,7 @@ static NodePrefixComp* ParseCall( Parser* p , NodePrefix* pp ) {
           break;
         case TK_RPAR:
           NEXT(p);
+          c->arg.sz = pos;
           goto done;
         default:
           ParserError(p,"expect a \",\" or \")\" here");
@@ -255,50 +231,61 @@ static NodePrefixComp* ParseCall( Parser* p , NodePrefix* pp ) {
   }
 
 done:
-  c->c.call->dbg_start = dbg_start;
-  c->c.call->dbg_end   = L(p)->pos;
-  return c;
+  c->base.dbg_end = L(p)->pos;
+  return (Node*)c;
 }
 
 static Node* ParsePrefix( Parser* p ) {
-  size_t dbg_start = L(p)->pos;
   Node* pexpr = ParsePrimary(p);
   if(!pexpr) return NULL;
 
   if(pexpr->type == ENT_ID && _IsPrefixOp(LEX(p)->tk)) {
-    NodeId*         id = (NodeId*)pexpr;
-    NodePrefix* prefix = GRAB(NodePrefix);
-    prefix->base.type      = ENT_PREFIX;
-    prefix->base.dbg_start = dbg_start;
-    prefix->ctype          = NULL;
-
+    Node* cur = pexpr;
     /**
      * now at here, we meet a ID which is a possible start of a prefix
      * expression.
      */
     for( ;; ) {
-      NodePrefixComp* c;
       switch(LEX(p)->tk) {
         case TK_DOT:
-          NEXT(p); // skip .
-          if(LEX(p)->tk != TK_ID) {
-            ParserError(p,"expect a ID here");
-            return NULL;
+          {
+            NodeDot* dot;
+            size_t dbg_start = L(p)->pos;
+
+            NEXT(p); // skip .
+            if(LEX(p)->tk != TK_ID) {
+              ParserError(p,"expect a ID here");
+              return NULL;
+            }
+
+            dot = GRAB(NodeDot);
+            dot->base.dbg_start = dbg_start;
+            dot->base.type      = ENT_DOT;
+            dot->name           = LEX(p)->lit;
+            dot->lhs            = cur;
+            NEXT(p);
+            dot->base.dbg_end   = L(p)->pos;
+            cur                 = (Node*)dot;
           }
-          c            = NodePrefixAddComp(prefix,(p->pool));
-          c->comp_type = EEPCT_DOT;
-          c->c.name    = LEX(p)->lit;
-          NEXT(p);
           break;
         case TK_LSQR:
-          NEXT(p); // skip [
-          c = NodePrefixAddComp(prefix,(p->pool));
-          if(!(c->c.idx = ParseExpr(p))) return NULL;
-          c->comp_type= EEPCT_IDX;
-          EXPECT(p,TK_RSQR);
+          {
+            NodeIndex* idx;
+            size_t dbg_start = L(p)->pos;
+            idx = GRAB(NodeIndex);
+            idx->base.dbg_start = dbg_start;
+            idx->base.type      = ENT_INDEX;
+            idx->lhs            = cur;
+            NEXT(p); // skip [
+            if(!(idx->rhs= ParseExpr(p))) return NULL;
+            EXPECT(p,TK_RSQR);
+
+            idx->base.dbg_end   = L(p)->pos;
+            cur = (Node*)idx;
+          }
           break;
         case TK_LPAR:
-          if(!(c = ParseCall(p,prefix))) return NULL;
+          if(!(cur = ParseCall(p,cur)))  return NULL;
           break;
         default:
           goto done;
@@ -306,9 +293,7 @@ static Node* ParsePrefix( Parser* p ) {
     }
 
 done:
-    prefix->init         = id->name;
-    prefix->base.dbg_end = L(p)->pos;
-    return (Node*)prefix;
+    return cur;
   }
 
   return pexpr;
@@ -572,6 +557,14 @@ static int ParseVDec( Parser* p , TypeInfo* tinfo , LitIdx* ref ) {
   return ParseVDecWithType(p,&mt,tinfo,ref);
 }
 
+static Node* ParseDefineRHS( Parser* p , const TypeInfo* tinfo ) {
+  if(tinfo->type == ET_STRUCT && LEX(p)->tk == TK_LBRA) {
+    return ParseStruLit(p,tinfo->extra.name);
+  } else {
+    return ParseExpr(p);
+  }
+}
+
 // Parsing local variable definition or declaration.
 // lvar := def | dec
 // def  := type id array-modifier ';'
@@ -595,7 +588,7 @@ static Node* ParseLocal( Parser* p ) {
   // now check whether there's trailing assignment or not
   if(LEX(p)->tk == TK_ASSIGN) {
     NEXT(p); // skip =
-    if(!(l->rhs = ParseExpr(p)))
+    if(!(l->rhs = ParseDefineRHS(p,&l->tinfo)))
       return NULL;
   }
 
@@ -604,19 +597,13 @@ static Node* ParseLocal( Parser* p ) {
 }
 
 static int IsNodeLHS( Node* n ) {
-  if(n->type == ENT_ID || n->type == ENT_PREFIX) {
-    if(n->type == ENT_PREFIX) {
-      NodePrefix* np = (NodePrefix*)(n);
-      // function call cannot be used as LHS
-      if(np->comp[np->comp_sz-1].comp_type == EEPCT_CALL) {
-        goto not;
-      }
-    }
-    return 1;
+  switch(n->type) {
+    case ENT_ID:
+    case ENT_CALL:
+      return 1;
+    default:
+      return 0;
   }
-
-not:
-  return 0;
 }
 
 static int IsAssignOp( Token tk ) {
@@ -660,12 +647,8 @@ static Node* ParseCallOrAssign( Parser* p , Token delim ) {
     return (Node*)n;
   } else {
     // now this statement *must* be a call otherwise it is not allowed
-    if(lhs->type == ENT_PREFIX) {
-      NodePrefix* npref = (NodePrefix*)(lhs);
-      if(npref->comp[npref->comp_sz-1].comp_type == EEPCT_CALL) {
-        EXPECT(p,delim);
-        return lhs;
-      }
+    if(lhs->type == ENT_CALL) {
+      return lhs;
     }
   }
 
@@ -1006,7 +989,7 @@ static Node* ParseGlbVar( Parser* p , size_t dbg_start , LitIdx name , const Typ
   NodeGlobal* ret;
   Node*       val;
   NEXT(p); // skip the =
-  if(!(val = ParseExpr(p))) return NULL;
+  if(!(val = ParseDefineRHS(p,type))) return NULL;
   EXPECT(p,TK_SEMICOLON);
 
   ret = GRAB(NodeGlobal);
@@ -1177,7 +1160,9 @@ static void _NodeToJSON    ( Parser* , FILE* , const Node* );
 static void _LitToJSON     ( Parser* , FILE* , const NodeLit*    );
 static void _IdToJSON      ( Parser* , FILE* , const NodeId*     );
 static void _SLitToJSON    ( Parser* , FILE* , const NodeStruLit*);
-static void _PrefixToJSON  ( Parser* , FILE* , const NodePrefix* );
+static void _DotToJSON     ( Parser* , FILE* , const NodeDot* );
+static void _IndexToJSON   ( Parser* , FILE* , const NodeIndex* );
+static void _CallToJSON    ( Parser* , FILE* , const NodeCall*   );
 static void _UnaToJSON     ( Parser* , FILE* , const NodeUnary*  );
 static void _BinToJSON     ( Parser* , FILE* , const NodeBinary* );
 static void _TenToJSON     ( Parser* , FILE* , const NodeTernary* );
@@ -1209,7 +1194,9 @@ static void _NodeToJSON( Parser* p, FILE* f, const Node* e ) {
     case ENT_LIT:       _LitToJSON(p,f,(const NodeLit*)e);       break;
     case ENT_ID:        _IdToJSON (p,f,(const NodeId* )e);       break;
     case ENT_STRULIT:   _SLitToJSON(p,f,(const NodeStruLit*)e);  break;
-    case ENT_PREFIX:    _PrefixToJSON(p,f,(const NodePrefix*)e); break;
+    case ENT_DOT:       _DotToJSON(p,f,(const NodeDot*)e); break;
+    case ENT_INDEX:     _IndexToJSON(p,f,(const NodeIndex*)e); break;
+    case ENT_CALL:      _CallToJSON(p,f,(const NodeCall*)e); break;
     case ENT_UNARY:     _UnaToJSON(p,f,(const NodeUnary*)e);     break;
     case ENT_BINARY:    _BinToJSON(p,f,(const NodeBinary*)e);    break;
     case ENT_TERNARY:   _TenToJSON(p,f,(const NodeTernary*)e);   break;
@@ -1315,34 +1302,27 @@ static void _SLitToJSON( Parser* p , FILE* f , const NodeStruLit* slit ) {
   fprintf(f,"]}");
 }
 
-static void _PrefixToJSON( Parser* p , FILE* f , const NodePrefix* e ) {
-  fprintf(f,"{ \"type\" : \"prefix\" , \"init\" : \"%s\" ",LitPoolId(p->lpool,e->init));
-  fprintf(f,", \"rest\" : [");
-  for( size_t i = 0 ; i < e->comp_sz ; ++i ) {
-    const NodePrefixComp* c = e->comp + i;
-    switch(c->comp_type) {
-      case EEPCT_DOT:
-        fprintf(f,"{ \"type\" : \"dot\" , \"name\" : \"%s\" }",LitPoolId(p->lpool,c->c.name));
-        break;
-      case EEPCT_IDX:
-        fprintf(f,"{ \"type\" : \"index\" , \"value\" : ");
-        _NodeToJSON(p,f,c->c.idx);
-        fprintf(f,"}");
-        break;
-      case EEPCT_CALL:
-        fprintf(f,"{ \"type\" : \"call\" , \"arg\" : [");
-        for( size_t i = 0 ; i < c->c.call->sz; ++i ) {
-          _NodeToJSON(p,f,c->c.call->args[i]);
-          if(i < c->c.call->sz-1) fprintf(f,",");
-        }
-        fprintf(f,"]}");
-        break;
-      default:
-        assert(0);
-        break;
-    }
+static void _DotToJSON( Parser* p , FILE* f , const NodeDot* e ) {
+  fprintf(f,"{ \"type\" : \"dot\" , \"lhs\" :");
+  _NodeToJSON(p,f,e->lhs);
+  fprintf(f,", \"rhs\" : \"%s\" }", LitPoolId(p->lpool,e->name) );
+}
 
-    if(i < e->comp_sz -1) fprintf(f,",");
+static void _IndexToJSON( Parser* p , FILE* f , const NodeIndex* e ) {
+  fprintf(f,"{ \"type\" : \"index\" , \"lhs\" : ");
+  _NodeToJSON(p,f,e->lhs);
+  fprintf(f,", \"rhs\" : ");
+  _NodeToJSON(p,f,e->rhs);
+  fprintf(f,"}\n");
+}
+
+static void _CallToJSON( Parser* p , FILE* f , const NodeCall* e ) {
+  fprintf(f,"{ \"type\" : \"call\" , \"lhs\" : ");
+  _NodeToJSON(p,f,e->lhs);
+  fprintf(f,",\"arg\" : [");
+  for( size_t i = 0 ; i < e->arg.sz ; ++i ) {
+    _NodeToJSON(p,f,e->arg.args[i]);
+    if(i < e->arg.sz - 1) fprintf(f,",");
   }
   fprintf(f,"]}");
 }

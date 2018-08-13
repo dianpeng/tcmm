@@ -341,7 +341,9 @@ typedef enum _ENodeType {
   ENT_LIT,
   ENT_ID,
   ENT_STRULIT,
-  ENT_PREFIX,
+  ENT_DOT,
+  ENT_INDEX,
+  ENT_CALL,
   ENT_UNARY,
   ENT_BINARY,
   ENT_TERNARY,
@@ -425,60 +427,55 @@ typedef struct _NodeStruLit {
   const StructType*   ctype;
 } NodeStruLit;
 
+typedef struct _NodeDot {
+  Node   base;
+  Node*   lhs;
+  LitIdx name;
+  const FieldType* ctype;
+} NodeDot;
+
+typedef struct _NodeIndex {
+  Node   base;
+  Node*   lhs;
+  Node*   rhs;
+  const Type* ctype;
+} NodeIndex;
+
 typedef struct _NodePrefixCompCall {
   Node* args[CONFIG_MAX_CALL_ARGS];
   size_t   sz;
-  size_t   dbg_start;
-  size_t   dbg_end;
 } NodePrefixCompCall;
 
-typedef enum _ENodePrefixCompType {
-  EEPCT_DOT,
-  EEPCT_IDX,
-  EEPCT_CALL
-} ENodePrefixCompType;
+typedef struct _NodeCall {
+  Node   base;
+  Node*   lhs;
+  NodePrefixCompCall arg;
 
-typedef struct _NodePrefixComp {
-  union {
-    LitIdx  name;
-    Node*    idx;
-    NodePrefixCompCall* call;
-  } c;
-  ENodePrefixCompType comp_type;
-} NodePrefixComp;
-
-typedef struct _NodePrefix {
-  Node            base;
-  LitIdx          init;
-  NodePrefixComp* comp;
-  size_t          comp_sz;
-  size_t          comp_cap;
-
-  const Type*     ctype;
-} NodePrefix;
+  const Type* ctype;
+} NodeCall;
 
 typedef struct _NodeUnary {
   Node       base;
-  const Node* opr;
+  Node*       opr;
   Token        op;
 
   const Type* ctype;
 } NodeUnary;
 
 typedef struct _NodeBinary {
-  Node     base;
-  const Node* lhs;
-  const Node* rhs;
+  Node  base;
+  Node* lhs;
+  Node* rhs;
   Token        op;
 
   const Type* ctype;
 } NodeBinary;
 
 typedef struct _NodeTernary {
-  Node         base;
-  const Node* first;
-  const Node* second;
-  const Node* third;
+  Node  base;
+  Node* first;
+  Node* second;
+  Node* third;
 
   const Type* ctype;
 } NodeTernary;
@@ -614,5 +611,6 @@ typedef struct _NodeToBool {
 
 PAPI NodeFile* Parse     ( LitPool* , MPool* , const char* );
 PAPI void      NodeToJSON( LitPool* , MPool* , FILE* , const Node* );
+PAPI int       SemaCheck ( LitPool* , TypeSys* , MPool* , const char* , NodeFile* , const char** );
 
 #endif // TCMM_H_
