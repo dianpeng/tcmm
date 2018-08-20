@@ -15,24 +15,38 @@ can typically find in those JIT compiler's baseline compiler.
 6) RSI,RCX,RDX,R8-R15 are scratch registers can be used at any time
 7) When calls into another functions registers , except RBX and RBP and RSP , are all caller saved
 
-Function Call:
 
-Calling a *script side* function requires using stack to pass the argument. All the named argument are stack shadowed
-to simplify the GC , ie all the variables that has a name in script is in stack. The stack will be reserved with maximum
-size up front when just entering into the function.
+1. Call a script function
 
-The function prolog is same as most x86 style:
+  Example : foo(1,2,3,4);
 
-mov rbp,rsp
-sub rsp,SIZE
+  When enter into the function foo , the stack layout:
 
-Assume function protocol is foo(a,b,c,d) then we will have argument mapping as following :
+  [ 1     ]
+  [ 2     ]
+  [ 3     ]
+  [ 4     ]
+  [ raddr ]
+  [ ....  ] <---- rsp
 
-  a ==> rbp + 8*4
-  b ==> rbp + 8*3
-  c ==> rbp + 8*2
-  d ==> rbp + 8*1
 
-  __ret__ ==> rbp
+  function prolog :
 
-local variables are indexed via rsp + offset
+    push rbp
+    mov  rbp,rsp
+    sub  rsp,max_lc_sz
+
+
+  The stack layout becomes as following :
+
+  [ 1     ]
+  [ 2     ]
+  [ 3     ]
+  [ 4     ]
+  [ raddr ]
+  [ orbp  ]
+      .
+      .
+      .
+  [ ....  ] <----- rsp
+

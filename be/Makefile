@@ -8,11 +8,11 @@ CC                = gcc
 NASM              = nasm
 #SANITIZER         =-fsanitize=address,undefined
 RUNTIME_DEBUG     =-D_FORTIFY_SOURCE=2 -D_GLIBCC_ASSERTIONS
-PROGNAME          =cunitpp
+PROGNAME          =cunitpp-be
 LIBNAME           =lib$(PROGNAME).a
 INCNAME           =cunitpp.h
 
-CFLAGS           =
+CFLAGS            =
 LDFLAGS           = -lelf
 
 # test

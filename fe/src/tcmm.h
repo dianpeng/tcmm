@@ -312,25 +312,23 @@ PAPI const FuncType* TypeSysGetFunc  ( TypeSys* , LitIdx );
 
 // setter
 // struct type
-PAPI
-StructType* TypeSysSetStruct  ( TypeSys* , LitIdx );
+PAPI StructType* TypeSysSetStruct  ( TypeSys* , LitIdx );
 
-PAPI
-const FieldType* TypeSysAddStructField( TypeSys* , StructType* , LitIdx , const Type* );
+PAPI const FieldType* TypeSysAddStructField( TypeSys* , StructType* , LitIdx , const Type* );
 
 // array type
-PAPI
-ArrType* TypeSysSetArr ( TypeSys* , const Type* , size_t length );
+PAPI ArrType* TypeSysSetArr ( TypeSys* , const Type* , size_t length );
 
 // func type
-PAPI
-FuncType* TypeSysSetFunc( TypeSys* , LitIdx );
+PAPI FuncType* TypeSysSetFunc( TypeSys* , LitIdx );
 
-PAPI
-void TypeSysFuncSetRet( TypeSys* , FuncType* , const Type* );
+PAPI void TypeSysFuncSetRet( TypeSys* , FuncType* , const Type* );
 
-PAPI
-const FuncTypeArg* TypeSysFuncAddArg( TypeSys* , FuncType* , const Type* , LitIdx );
+PAPI const FuncTypeArg* TypeSysFuncAddArg( TypeSys* , FuncType* , const Type* , LitIdx );
+
+// dump type
+PAPI void TypeToJSON   ( TypeSys* , const Type* , FILE* );
+PAPI void TypeSysToJSON( TypeSys* , FILE* );
 
 /* -------------------------------------------------------
  * Parser
@@ -403,7 +401,8 @@ typedef struct _NodeLit {
   Node         base;
   LitIdx        lit;
   const Type* ctype;
-  IdRef       idref;
+  uint32_t     ref; // if lit is a double dref points to the double table that
+                    // stores the double literals
 } NodeLit;
 
 typedef struct _NodeId {
@@ -609,8 +608,22 @@ typedef struct _NodeToBool {
   Node* expr;
 } NodeToBool;
 
-PAPI NodeFile* Parse     ( LitPool* , MPool* , const char* );
-PAPI void      NodeToJSON( LitPool* , MPool* , FILE* , const Node* );
+PAPI NodeFile* Parse     ( LitPool* , MPool*   , const char* );
+PAPI void      NodeToJSON( LitPool* , MPool*   , FILE*  , const Node* );
 PAPI int       SemaCheck ( LitPool* , TypeSys* , MPool* , const char* , NodeFile* , const char** );
+
+/**
+ * Garbage Collector interface
+ */
+typedef struct _GCObj {
+} GCObj;
+
+/**
+ * Context for runtime
+ */
+struct Ctx {
+  double* dbl_tb; // double table
+  GCObj** str_tb; // string table
+};
 
 #endif // TCMM_H_

@@ -128,7 +128,8 @@ StructType* TypeSysSetStruct( TypeSys* sys , LitIdx idx ) {
 
 PAPI
 const FieldType* TypeSysAddStructField( TypeSys* sys , StructType* st , LitIdx idx , const Type* t ) {
-  FieldType* ft;
+  FieldType*     ft;
+
   if(st->fcap == st->fsize) {
     size_t ncap= st->fcap ? st->fcap * 2 : 8;
     st->fstart = MPoolRealloc(sys->pool,st->fstart,st->fsize*sizeof(FieldType),ncap*sizeof(FieldType));
@@ -139,19 +140,25 @@ const FieldType* TypeSysAddStructField( TypeSys* sys , StructType* st , LitIdx i
   ft->p = st;
 
   // calculate the padding and offset of each member field
-  if(t->align > st->base.align) {
+  if(t->align > st->base.align)
     st->base.align = t->align;
-  }
 
   if(st->fsize > 0) {
     FieldType* pft = st->fstart + (st->fsize-1);  // previous field's type object
-    size_t ppos    = pft->offset+ pft->t->size;   // where the previous field end
-    size_t npos    = ALIGN(ppos,t->align);        // where the new field starts after padding/alignment
+    size_t    ppos = pft->offset+ pft->t->size;   // where the previous field end
+    size_t    npos = ALIGN(ppos,t->align);        // where the new field starts after padding/alignment
     ft->offset     = npos;
+  } else {
+    ft->offset     = 0;
   }
 
-  ft->t      = t;
-  ft->name   = idx;
+  ft->t    = t;
+  ft->name = idx;
+
+  // modify the size and alignment
+  st->base.size   = ft->offset + ALIGN(ft->t->size,ft->t->align);
+  if(st->base.align < t->align)
+    st->base.align = t->align;
 
   ++st->fsize;
   return ft;
@@ -204,17 +211,107 @@ TypeSysFuncAddArg( TypeSys* sys , FuncType* ft , const Type* t , LitIdx aname ) 
 PAPI
 const char* ETypeGetStr( EType t ) {
   switch(t) {
-    case EPT_INT: return "int";
-    case EPT_DBL: return "double";
-    case EPT_CHAR: return "char";
-    case EPT_BOOL: return "bool";
-    case EPT_VOID: return "void";
-    case ET_STR : return "str";
-    case ET_STRUCT: return "struct";
-    case ET_ARR: return "array";
-    case ET_FUNC: return "func";
+    case EPT_INT:       return "int";
+    case EPT_DBL:       return "double";
+    case EPT_CHAR:      return "char";
+    case EPT_BOOL:      return "bool";
+    case EPT_VOID:      return "void";
+    case ET_STR :       return "str";
+    case ET_STRUCT:     return "struct";
+    case ET_ARR:        return "array";
+    case ET_FUNC:       return "func";
     default: assert(0); return "";
   }
+}
+
+PAPI void TypeToJSON( TypeSys* tsys , const Type* t , FILE* o ) {
+  switch(t->tag) {
+    case EPT_INT:
+      fprintf(o,"{ \"type\" : \"int\" , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case EPT_DBL:
+      fprintf(o,"{ \"type\" : \"double\" , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case EPT_CHAR:
+      fprintf(o,"{ \"type\" : \"char\" , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case EPT_BOOL:
+      fprintf(o,"{ \"type\" : \"bool\" , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case EPT_VOID:
+      fprintf(o,"{ \"type\" : \"void\" , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case ET_STR:
+      fprintf(o,"{ \"type\" : \"str\"  , \"size\" : %zu , \"align\" : %zu }",t->size,t->align);
+      break;
+    case ET_ARR:
+      {
+        const ArrType* at = (const ArrType*)t;
+        fprintf(o,"{ \"type\" : \"array\", \"size\" : %zu , \"align\" : %zu , \"sub-type\" : ",
+                  at->base.size,at->base.align);
+        TypeToJSON(tsys,at->type,o);
+        fprintf(o," , \"length\" : %zu }",at->len);
+      }
+      break;
+    case ET_FUNC:
+      {
+        const FuncType* ft = (const FuncType*)t;
+        fprintf(o,"{ \"type\" : \"func\" , \"name\" : \"%s\" " , LitPoolStr(tsys->lpool,ft->name) );
+
+        fprintf(o,",\"return\": ");
+        TypeToJSON(tsys,ft->ret,o);
+
+        fprintf(o,",\"argument\":[");
+        for( size_t i = 0 ; i < ft->arg_size ; ++i ) {
+          const FuncTypeArg* at = ft->arg + i;
+          fprintf(o,"{ \"name\" : \"%s\" , \"type\" : ",LitPoolStr(tsys->lpool,at->name));
+          TypeToJSON(tsys,at->type,o);
+          fprintf(o,"}");
+          if(i < ft->arg_size - 1)
+            fprintf(o,",");
+        }
+        fprintf(o,"]}");
+      }
+      break;
+    case ET_STRUCT:
+      {
+        const StructType* st = (const StructType*)t;
+        fprintf(o,"{ \"type\" : \"struct\" , \"name\" : \"%s\" , \"size\" : %zu, \"align\" : %zu",
+                  LitPoolStr(tsys->lpool,st->name),st->base.size,st->base.align);
+        fprintf(o,", \"field\": [");
+        for( size_t i = 0 ; i < st->fsize ; ++i ) {
+          const FieldType* ft = st->fstart + i;
+          fprintf(o," { \"name\" : \"%s\" , \"offset\" : %zu , \"type\" : ",
+                    LitPoolStr(tsys->lpool,ft->name) , ft->offset );
+          TypeToJSON(tsys,ft->t,o);
+          fprintf(o,"}");
+          if(i < st->fsize - 1) fprintf(o,",");
+        }
+        fprintf(o,"]}");
+      }
+      break;
+    default:
+      assert(0);
+      break;
+  }
+}
+
+PAPI void TypeSysToJSON( TypeSys* tsys , FILE* o ) {
+  fprintf(o,"[");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_int)),o); fprintf(o,",");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_dbl)),o); fprintf(o,",");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_char)),o);fprintf(o,",");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_bool)),o);fprintf(o,",");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_void)),o);fprintf(o,",");
+  TypeToJSON(tsys,(const Type*)(&(tsys->t_str)),o); fprintf(o,",");
+
+  for( Type* t = tsys->types ; t ; t = t->next ) {
+    TypeToJSON(tsys,t,o);
+    if(t->next) {
+      fprintf(o,",");
+    }
+  }
+  fprintf(o,"]");
 }
 
 #undef LINK_TYPE // LINK_TYPE

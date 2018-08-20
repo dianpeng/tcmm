@@ -58,8 +58,6 @@ TEST(Type,Array) {
   MPoolDelete(&mpool);
 }
 
-#if 0
-
 StructType* Struct0( TypeSys* sys , const char* name ) {
   LitIdx name_idx = LitPoolGetStr( sys->lpool, name );
   return TypeSysSetStruct(sys,name_idx);
@@ -69,6 +67,7 @@ StructType* Struct1( TypeSys* sys , const char* name ,
                                     const Type* t1   , const char* n1 ) {
   StructType* stype = Struct0(sys,name);
   TypeSysAddStructField(sys,stype,LitPoolGetStr(sys->lpool,n1),t1);
+  return stype;
 }
 
 StructType* Struct2( TypeSys* sys , const char* name ,
@@ -81,28 +80,45 @@ StructType* Struct2( TypeSys* sys , const char* name ,
 
 TEST(Type,Struct) {
   TypeSys tsys;
+  MPool   mpool;
   LitPool lpool;
 
-  LitPoolInit(&lpool);
-  TypeSysInit(&tsys,&lpool);
+  MPoolInit  (&mpool,1024,4096);
+  LitPoolInit(&lpool,&mpool);
+  TypeSysInit(&tsys,&lpool,&mpool);
 
   {
     StructType* stype = Struct0(&tsys,"astruct0");
     ASSERT_EQ(0,stype->fsize);
-    {
-      const Lit* lit = LitPoolIndex(&lpool,stype->name);
-      ASSERT_EQ(ELT_STR,lit->type);
-      ASSERT_STREQ("astruct0",lit->d.str);
-    }
+    ASSERT_STREQ("astruct0",LitPoolStr(&lpool,stype->name));
     ASSERT_EQ(ET_STRUCT,stype->base.tag);
   }
 
+  {
+    const Type* t1 = (const Type*)TypeSysGetChar(&tsys);
+    const Type* t2 = (const Type*)TypeSysGetInt (&tsys);
+
+    StructType* stype = Struct2(&tsys,"astruct2",t1,"achar",t2,"aint");
+    ASSERT_EQ(2,stype->fsize);
+    ASSERT_STREQ("astruct2",LitPoolStr(&lpool,stype->name));
+    ASSERT_EQ(ET_STRUCT,stype->base.tag);
+  }
+
+  {
+    const Type* t1 = (const Type*)TypeSysSetArr(&tsys,(const Type*)(TypeSysGetInt(&tsys)),10);
+    const Type* t2 = (const Type*)TypeSysGetDbl(&tsys);
+    StructType* stype = Struct2(&tsys,"astruct_arr2",t1,"arr",t2,"dbl");
+    ASSERT_EQ(2,stype->fsize);
+    ASSERT_STREQ("astruct_arr2",LitPoolStr(&lpool,stype->name));
+    ASSERT_EQ(ET_STRUCT,stype->base.tag);
+  }
+
+  TypeSysToJSON(&tsys,stderr);
+  fprintf(stderr,"\n");
 
   LitPoolDelete(&lpool);
   TypeSysDelete(&tsys);
 }
-
-#endif
 
 int main( int argc , char* argv[] ) {
   return RunAllTests(argc,argv);
